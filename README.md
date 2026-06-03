@@ -20,7 +20,11 @@ Open `index.html` in any modern browser. No install, no build step.
 
 ## LLM narration (optional)
 
-In interactive mode, paste an Anthropic API key in the Settings panel to have Claude narrate the agent's reasoning in plain English. Without a key, a templated explanation is shown instead. The key is held in memory only — never persisted.
+In interactive mode, paste an Anthropic API key in the Settings panel to have Claude Sonnet 4.6 narrate the agent's reasoning in plain English. Without a key, a templated explanation is shown instead. The key is held in memory only — never persisted.
+
+## Debug window
+
+Click **Open debug window** in the sidebar to open a separate browser window that streams every behind-the-scenes decision — new ride requests, dispatch assignments, shuttle pooling, pickups/dropoffs, route planning in interactive mode, sensor detections, and replans. The debug window has its own Pause and Clear controls.
 
 ## See also
 

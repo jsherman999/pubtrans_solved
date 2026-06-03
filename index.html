@@ -56,6 +56,7 @@ input[type=password]:focus, input[type=text]:focus { outline: none; border-color
       <button id="mode-auto" class="active">Auto</button>
       <button id="mode-interactive">Interactive</button>
     </div>
+    <div class="btn-row" style="margin-bottom: 16px"><button id="debug">Open debug window</button></div>
 
     <section id="auto-controls">
       <h3>Controls</h3>
@@ -284,6 +285,87 @@ function clockStr() {
 }
 
 // ============================================================
+// Debug window — separate browser window streaming sim decisions
+// ============================================================
+let dbgWin = null;
+const dbgBuffer = [];
+const DBG_MAX = 500;
+let dbgPaused = false;
+const DBG_STYLE =
+  '* { box-sizing: border-box; margin: 0; padding: 0; }' +
+  'body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0f1014; color: #ddd; height: 100vh; display: flex; flex-direction: column; }' +
+  'header { display: flex; gap: 10px; align-items: center; padding: 10px 14px; background: #16171c; border-bottom: 1px solid #2a2c33; }' +
+  'header h1 { font-size: 13px; font-weight: 600; letter-spacing: 0.3px; }' +
+  'header .grow { flex: 1; }' +
+  'header button { padding: 5px 10px; background: #2a2c33; border: 1px solid #3a3d44; color: #ddd; border-radius: 3px; font-size: 11px; cursor: pointer; }' +
+  'header button.active { background: #14b8a6; color: #0f1014; border-color: #14b8a6; }' +
+  '#log { flex: 1; overflow-y: auto; padding: 8px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 1.55; }' +
+  '.log-row { display: grid; grid-template-columns: 50px 80px 1fr; gap: 8px; padding: 1px 0; border-bottom: 1px dotted #1a1c20; }' +
+  '.t { color: #555; }' +
+  '.cat { font-weight: 600; letter-spacing: 0.5px; }' +
+  '.cat-request .cat { color: #60a5fa; }' +
+  '.cat-dispatch .cat { color: #14b8a6; }' +
+  '.cat-pool .cat { color: #f97316; }' +
+  '.cat-pickup .cat { color: #22c55e; }' +
+  '.cat-dropoff .cat { color: #a78bfa; }' +
+  '.cat-plan .cat { color: #fbbf24; }' +
+  '.cat-obstacle .cat { color: #ef4444; }' +
+  '.cat-replan .cat { color: #ec4899; }' +
+  '.cat-system .cat { color: #888; }' +
+  '.msg { color: #ddd; word-break: break-word; }';
+
+function openDebugWindow() {
+  if (dbgWin && !dbgWin.closed) { dbgWin.focus(); return; }
+  dbgWin = window.open("", "pubtrans-debug", "width=640,height=780");
+  if (!dbgWin) { alert("Popup blocked. Please allow popups for this page."); return; }
+  const doc = dbgWin.document;
+  doc.open();
+  doc.write(
+    '<!DOCTYPE html><html><head><meta charset="utf-8"><title>PubTrans · Debug</title><style>' +
+    DBG_STYLE +
+    '</style></head><body><header><h1>PubTrans · Debug stream</h1><div class="grow"></div>' +
+    '<button id="dbg-pause">Pause</button><button id="dbg-clear">Clear</button>' +
+    '</header><div id="log"></div></body></html>'
+  );
+  doc.close();
+  doc.getElementById("dbg-pause").addEventListener("click", (e) => {
+    dbgPaused = !dbgPaused;
+    e.target.textContent = dbgPaused ? "Resume" : "Pause";
+    e.target.classList.toggle("active", dbgPaused);
+  });
+  doc.getElementById("dbg-clear").addEventListener("click", () => {
+    dbgBuffer.length = 0;
+    const logEl = doc.getElementById("log");
+    if (logEl) logEl.innerHTML = "";
+  });
+  for (const entry of dbgBuffer) dbgAppend(entry);
+  dbg("SYSTEM", "Debug window opened — streaming live sim decisions.");
+}
+
+function dbg(category, msg) {
+  const entry = { t: clockStr(), category, msg };
+  dbgBuffer.push(entry);
+  if (dbgBuffer.length > DBG_MAX) dbgBuffer.shift();
+  if (dbgWin && !dbgWin.closed && !dbgPaused) dbgAppend(entry);
+}
+
+function dbgAppend(entry) {
+  if (!dbgWin || dbgWin.closed) return;
+  const doc = dbgWin.document;
+  const logEl = doc.getElementById("log");
+  if (!logEl) return;
+  const row = doc.createElement("div");
+  row.className = "log-row cat-" + entry.category.toLowerCase();
+  const t = doc.createElement("span"); t.className = "t"; t.textContent = entry.t;
+  const c = doc.createElement("span"); c.className = "cat"; c.textContent = entry.category;
+  const m = doc.createElement("span"); m.className = "msg"; m.textContent = entry.msg;
+  row.appendChild(t); row.appendChild(c); row.appendChild(m);
+  logEl.appendChild(row);
+  while (logEl.children.length > DBG_MAX) logEl.removeChild(logEl.firstChild);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ============================================================
 // Population — 100 humans with schedules
 // ============================================================
 const humans = [];
@@ -376,7 +458,7 @@ function checkSchedules() {
     for (const s of h.schedule) {
       if (!s.requested && simMinute >= s.minute) {
         s.requested = true;
-        queue.push({
+        const req = {
           id: nextReqId++,
           human: h,
           from: s.from,
@@ -384,7 +466,9 @@ function checkSchedules() {
           pickupId: s.from.accessId,
           dropoffId: s.to.accessId,
           requestedAt: simMinute,
-        });
+        };
+        queue.push(req);
+        dbg("REQUEST", "r#" + req.id + " " + h.profile + " #" + h.id + ": " + s.from.name + " → " + s.to.name);
       }
     }
   }
@@ -459,6 +543,12 @@ function assignSingle(car, req) {
   car.pickupQueue = [req];
   claimRoute(car, toPickup);
   claimRoute(car, toDropoff);
+  dbg(
+    "DISPATCH",
+    car.id + " (" + car.kind + ") → r#" + req.id +
+    " · pickup " + req.from.name + " (" + toPickup.edges.length + " blk, cost " + toPickup.cost.toFixed(1) + ")" +
+    " · drop " + req.to.name + " (" + toDropoff.edges.length + " blk, cost " + toDropoff.cost.toFixed(1) + ")"
+  );
   if (toPickup.edges.length === 0) {
     // already at pickup
     car.riders = car.pickupQueue.slice();
@@ -488,6 +578,13 @@ function assignShuttle(car, reqs) {
   segments.push({ type: "dropoff_all", route: dropSeg });
   for (const s of segments) claimRoute(car, s.route);
   car._segments = segments;
+  const totalBlk = segments.reduce((s, x) => s + x.route.edges.length, 0);
+  dbg(
+    "POOL",
+    car.id + " pooling " + reqs.length + " riders → " + reqs[0].to.name +
+    " · reqs [" + reqs.map(r => "r#" + r.id).join(",") + "]" +
+    " · " + segments.length + " segments, " + totalBlk + " total blocks"
+  );
   // start first segment
   const first = car._segments.shift();
   car._activeSeg = first;
@@ -564,6 +661,8 @@ function arriveAtRouteEnd(car) {
   if (car._segments && car._activeSeg) {
     if (car._activeSeg.type === "pickup") {
       car.riders.push(car._activeSeg.req);
+      dbg("PICKUP", car.id + " picked up r#" + car._activeSeg.req.id +
+        " at " + car._activeSeg.req.from.name + " (aboard: " + car.riders.length + "/" + car.capacity + ")");
     }
     const next = car._segments.shift();
     car._activeSeg = next;
@@ -575,6 +674,10 @@ function arriveAtRouteEnd(car) {
   // Sedan flow
   if (car.state === "enroute_pickup") {
     car.riders = car.pickupQueue.slice();
+    const first = car.pickupQueue[0];
+    if (first) {
+      dbg("PICKUP", car.id + " picked up r#" + first.id + " at " + first.from.name);
+    }
     car.state = "enroute_dropoff";
     if (car._toDropoffRoute) {
       setRoute(car, car._toDropoffRoute);
@@ -591,6 +694,13 @@ function arriveAtRouteEnd(car) {
 }
 
 function finishTrip(car) {
+  if (car.riders.length > 0) {
+    const destName = car.riders[0].to ? car.riders[0].to.name : (ix.dest ? ix.dest.name : "destination");
+    const avgWait = car.riders.reduce((s, r) => s + (simMinute - r.requestedAt), 0) / car.riders.length;
+    dbg("DROPOFF", car.id + " dropped off " + car.riders.length + " rider" +
+      (car.riders.length === 1 ? "" : "s") + " at " + destName +
+      " · avg trip " + avgWait.toFixed(1) + " sim-min");
+  }
   for (const r of car.riders) {
     completedTrips.push({ tripMin: simMinute - r.requestedAt });
   }
@@ -750,6 +860,11 @@ document.getElementById("ix-plan").addEventListener("click", async () => {
   document.getElementById("ix-drive").disabled = false;
 
   const labels = ["A", "B", "C", "D"];
+  const summary = ix.routes.map((r, i) =>
+    labels[i] + "=" + r.edges.length + "blk/" + countConflicts(r) + "cnf/cost" + r.cost.toFixed(1)
+  ).join(" · ");
+  dbg("PLAN", ix.source.name + " → " + ix.dest.name +
+    " · " + ix.routes.length + " candidates [" + summary + "] · chosen " + labels[bestIdx]);
   const decisionData = {
     source: ix.source.name,
     dest: ix.dest.name,
@@ -828,6 +943,8 @@ function checkObstacle(car) {
       car.state = "obstacle_wait";
       car._obstacleTimer = 12;
       car._banEdge = o.banEdge;
+      dbg("OBSTACLE", car.id + " sensor cone detected " + o.kind +
+        " on edge " + o.banEdge + " · stopping for replan");
       const narrEl = document.getElementById("ix-narration");
       narrEl.classList.remove("placeholder");
       narrEl.textContent =
@@ -851,11 +968,15 @@ function replanAroundObstacle(car) {
     claimRoute(car, newRoute);
     setRoute(car, newRoute);
     car.state = "enroute_dropoff";
+    dbg("REPLAN", car.id + " rerouted around banned edge " + car._banEdge +
+      " · " + newRoute.edges.length + " blocks to " + (ix.dest ? ix.dest.name : "destination") +
+      " (cost " + newRoute.cost.toFixed(1) + ")");
     const narrEl = document.getElementById("ix-narration");
     narrEl.textContent +=
       " Detour found — " + newRoute.edges.length + " block" +
       (newRoute.edges.length === 1 ? "" : "s") + " remaining. Resuming.";
   } else {
+    dbg("REPLAN", car.id + " no detour available · continuing on banned edge");
     car.state = "enroute_dropoff";
   }
 }
@@ -906,7 +1027,7 @@ async function narrateDecision(d) {
         "anthropic-dangerous-direct-browser-access": "true",
       },
       body: JSON.stringify({
-        model: "claude-haiku-4-5-20251001",
+        model: "claude-sonnet-4-6",
         max_tokens: 400,
         messages: [{ role: "user", content: prompt }],
       }),
@@ -1183,6 +1304,7 @@ document.getElementById("reset").addEventListener("click", () => {
 });
 document.getElementById("mode-auto").addEventListener("click", () => setMode("auto"));
 document.getElementById("mode-interactive").addEventListener("click", () => setMode("interactive"));
+document.getElementById("debug").addEventListener("click", openDebugWindow);
 
 // ============================================================
 // Init

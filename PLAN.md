@@ -12,7 +12,7 @@ A single `index.html` file (HTML + Canvas + vanilla JS, no build step). Double-c
 |----------|--------|
 | Stack | Single-file HTML + Canvas + JS |
 | Dispatcher | Deterministic k-shortest-paths + congestion scoring, labeled "the agent" |
-| LLM use | Claude Haiku 4.5, narrates *interactive mode* decisions only (API key pasted in UI, in-memory) |
+| LLM use | Claude Sonnet 4.6, narrates *interactive mode* decisions only (API key pasted in UI, in-memory) |
 | Visual style | Clean geometric — labeled colored blocks, smooth car motion, HUD |
 | Population | 100 simulated humans |
 | Scope | Larger build (~1000–1400 lines) — schedules, pooling, obstacles, gridlock metric |
@@ -79,11 +79,25 @@ Priority order: (1) safety, (2) fastest route for this rider, (3) avoid system g
 ## LLM Narration
 
 - Settings panel with Anthropic API key input (in-memory only, never persisted)
-- Model: `claude-haiku-4-5-20251001`
+- Model: `claude-sonnet-4-6`
 - Direct browser call with `anthropic-dangerous-direct-browser-access: true`
 - Input: structured decision data (candidate routes, conflict counts, choice)
 - Output: 3–5 sentences of plain-English reasoning
 - Fallback when no key: templated narration ("Route B has 2 conflicting cars vs Route A's 5; chose B despite being 80m longer")
+
+## Debug Window
+
+Optional separate browser window (popup) streaming every behind-the-scenes decision in real time. Triggered by an "Open debug window" button in the sidebar. Categories logged:
+
+- `REQUEST` — new ride request enqueued (rider profile, source → destination)
+- `DISPATCH` — sedan assignment, with pickup + dropoff route lengths and costs
+- `POOL` — shuttle pooling formation, riders grouped, segment count and total blocks
+- `PICKUP` / `DROPOFF` — per-car events with rider counts and trip times
+- `PLAN` — interactive-mode plan: candidate routes with blocks/conflicts/scores and chosen route
+- `OBSTACLE` — sensor cone detection event during interactive drive
+- `REPLAN` — detour computation result (new route length and cost, or "no detour available")
+
+Pause / Clear controls in the debug window header. Buffer caps at 500 entries.
 
 ## Build Steps (each verifiable)
 
