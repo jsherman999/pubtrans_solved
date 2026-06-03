@@ -18,6 +18,8 @@ Open `index.html` in any modern browser. No install, no build step.
 
 **Interactive** — click a source then destination. The agent's decision is walked through step-by-step: candidate routes, conflict analysis, chosen route, then a simulated trip with scripted obstacles (jaywalker, parked truck, manual-driven car) demonstrating sensor avoidance and on-the-fly replan.
 
+**Driver POV** — same source/destination flow as Interactive, but during the drive the canvas splits into a small top-down mini-map (with the focal car highlighted and its view cone shown) and a wireframe first-person view from inside the car. Roads, lane stripes, building faces, other cars in the fleet (at their real positions), and scripted jaywalkers are projected from the car's perspective. When the sensor cone detects an obstacle, the FPV shows a red BRAKE overlay; the route then replans and the camera swings onto the detour.
+
 ## LLM narration (optional)
 
 In interactive mode, paste an Anthropic API key in the Settings panel to have Claude Sonnet 4.6 narrate the agent's reasoning in plain English. Without a key, a templated explanation is shown instead. The key is held in memory only — never persisted.

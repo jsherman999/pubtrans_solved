@@ -61,7 +61,7 @@ Priority order: (1) safety, (2) fastest route for this rider, (3) avoid system g
   - report position to S
   - *(interactive mode only)* run sensor-cone check for scripted obstacles → slow / stop / replan
 
-## Two Modes
+## Three Modes
 
 ### Auto mode
 - Speed slider, time-of-day clock, runs a full simulated day
@@ -75,6 +75,16 @@ Priority order: (1) safety, (2) fastest route for this rider, (3) avoid system g
   2. Conflict analysis per route — count of other cars on overlapping edges, projected time
   3. Selected route + rationale (LLM-narrated if API key present, templated otherwise)
   4. **Drive** button starts the simulated trip — scripted obstacles fire mid-route (jaywalker, parked truck, manual-driven car) to demonstrate sensor avoidance and on-the-fly replan
+
+### Driver POV mode
+- Same source/destination/Plan/Drive flow as Interactive
+- Canvas splits: small top-down mini-map (with the focal car highlighted by a yellow ring and its FPV view cone overlaid) + larger wireframe first-person view rendered from inside the car
+- FPV pipeline (Canvas 2D + hand-rolled perspective):
+  - Camera at car position with eye height; heading interpolated for smooth turns
+  - World points → camera-space via 2D rotation; near-plane polygon clipping; perspective divide
+  - Roads with dashed centerlines, intersection plates, building faces (lit by distance), other cars at their real positions, scripted jaywalkers as wireframe figures
+  - HUD: car id, state, route progress; full-screen red BRAKE overlay when the sensor cone trips
+- The FPV is purely a visualization — routing, obstacle detection, and replanning still run in the same deterministic dispatcher used in Auto and Interactive modes
 
 ## LLM Narration
 

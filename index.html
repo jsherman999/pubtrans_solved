@@ -7,9 +7,13 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f1014; color: #e0e0e0; height: 100vh; overflow: hidden; }
 .app { display: grid; grid-template-columns: 1fr 380px; height: 100vh; }
-.canvas-wrap { position: relative; background: #0f1014; display: flex; align-items: center; justify-content: center; padding: 24px; }
+.canvas-wrap { position: relative; background: #0f1014; display: flex; align-items: center; justify-content: center; padding: 24px; gap: 0; }
+.canvas-wrap.pov-mode { gap: 20px; }
 #map { background: #1f2024; border-radius: 6px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); display: block; max-width: 100%; max-height: 100%; }
 #map.interactive { cursor: crosshair; }
+.canvas-wrap.pov-mode #map { width: 280px; height: 280px; flex-shrink: 0; }
+#fpv { display: none; background: #0a0b0e; border-radius: 6px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+.canvas-wrap.pov-mode #fpv { display: block; }
 .sidebar { background: #16171c; border-left: 1px solid #2a2c33; overflow-y: auto; padding: 18px; }
 .sidebar h1 { font-size: 22px; font-weight: 600; margin-bottom: 2px; letter-spacing: -0.3px; }
 .sub { font-size: 12px; color: #888; margin-bottom: 18px; }
@@ -47,7 +51,7 @@ input[type=password]:focus, input[type=text]:focus { outline: none; border-color
 </head>
 <body>
 <div class="app">
-  <div class="canvas-wrap"><canvas id="map" width="780" height="780"></canvas></div>
+  <div class="canvas-wrap"><canvas id="map" width="780" height="780"></canvas><canvas id="fpv" width="640" height="640"></canvas></div>
   <aside class="sidebar">
     <h1>PubTrans</h1>
     <p class="sub">Autonomous metro · agent-dispatched fleet</p>
@@ -55,6 +59,7 @@ input[type=password]:focus, input[type=text]:focus { outline: none; border-color
     <div class="mode-toggle">
       <button id="mode-auto" class="active">Auto</button>
       <button id="mode-interactive">Interactive</button>
+      <button id="mode-pov">Driver POV</button>
     </div>
     <div class="btn-row" style="margin-bottom: 16px"><button id="debug">Open debug window</button></div>
 
@@ -734,20 +739,23 @@ const ix = {
 
 function setMode(m) {
   mode = m;
+  const isIx = (m === "interactive" || m === "pov");
   document.getElementById("mode-auto").classList.toggle("active", m === "auto");
   document.getElementById("mode-interactive").classList.toggle("active", m === "interactive");
-  document.getElementById("interactive-panel").hidden = (m !== "interactive");
+  document.getElementById("mode-pov").classList.toggle("active", m === "pov");
+  document.getElementById("interactive-panel").hidden = !isIx;
   document.getElementById("auto-controls").hidden = (m !== "auto");
-  document.getElementById("map").classList.toggle("interactive", m === "interactive");
-  if (m === "interactive") {
+  document.getElementById("map").classList.toggle("interactive", isIx);
+  document.querySelector(".canvas-wrap").classList.toggle("pov-mode", m === "pov");
+  const panelH2 = document.querySelector("#interactive-panel h2");
+  if (panelH2) panelH2.textContent = (m === "pov" ? "Driver POV plan" : "Interactive plan");
+  if (isIx) {
     paused = true;
-    document.getElementById("pause").textContent = "Pause";
-    ixReset();
   } else {
     paused = false;
-    document.getElementById("pause").textContent = "Pause";
-    ixReset();
   }
+  document.getElementById("pause").textContent = "Pause";
+  ixReset();
 }
 
 function ixReset() {
@@ -790,7 +798,7 @@ function pickClosestBuilding(x, y) {
 
 const canvas = document.getElementById("map");
 canvas.addEventListener("click", (e) => {
-  if (mode !== "interactive") return;
+  if (mode !== "interactive" && mode !== "pov") return;
   if (ix.drivingCar) return; // already driving
   const rect = canvas.getBoundingClientRect();
   const x = (e.clientX - rect.left) * (canvas.width / rect.width);
@@ -906,6 +914,12 @@ document.getElementById("ix-drive").addEventListener("click", () => {
   car.interactive = true;
   car.sensorActive = true;
   car.riders = [{ human: { id: -1 }, requestedAt: simMinute, dropoffId: ix.dest.accessId }];
+  // initial heading so FPV doesn't open looking the wrong way
+  if (route.nodes.length >= 2) {
+    const [bx2, by2] = nodeXY(route.nodes[1]);
+    car.heading = Math.atan2(by2 - car.pos.y, bx2 - car.pos.x);
+  }
+  car._displayHeading = car.heading;
   ix.drivingCar = car;
   scheduleObstacles(route);
   document.getElementById("ix-drive").disabled = true;
@@ -1141,6 +1155,21 @@ function drawCars() {
       continue;
     }
     const x = car.pos.x, y = car.pos.y;
+    // focal-car highlight + FPV view cone on mini-map
+    if (mode === "pov" && car === ix.drivingCar && car.heading != null) {
+      ctx.fillStyle = "rgba(253, 224, 71, 0.18)";
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      const spread = FPV_FOV_RAD / 2;
+      ctx.arc(x, y, 130, car.heading - spread, car.heading + spread);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = "#fde047";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(x, y, 11, 0, Math.PI * 2);
+      ctx.stroke();
+    }
     // body
     const radius = car.kind === "sedan" ? 5.5 : 7.5;
     ctx.fillStyle = car.color;
@@ -1227,6 +1256,341 @@ function drawPin(nid, color, letter) {
 }
 
 // ============================================================
+// FPV (Driver POV) rendering — wireframe first-person view
+// ============================================================
+const fpvCanvas = document.getElementById("fpv");
+const fpvCtx = fpvCanvas.getContext("2d");
+const FPV_W = fpvCanvas.width;
+const FPV_H = fpvCanvas.height;
+const FPV_FOV_RAD = 75 * Math.PI / 180;
+const FPV_FOCAL = (FPV_W / 2) / Math.tan(FPV_FOV_RAD / 2);
+const FPV_HORIZON = FPV_H * 0.52;
+const FPV_EYE_HEIGHT = 14;
+const FPV_BLDG_HEIGHT = 64;
+const FPV_NEAR = 4;
+const FPV_FAR = CELL * 5;
+const FPV_ROAD_HALF = 14;
+
+function toCamSpace(wx, wy, wz, cam) {
+  const dx = wx - cam.x;
+  const dy = wy - cam.y;
+  return {
+    fwd: dx * cam.cos + dy * cam.sin,
+    right: -dx * cam.sin + dy * cam.cos,
+    z: wz - cam.z,
+  };
+}
+function projectCam(v) {
+  return {
+    x: FPV_W / 2 + FPV_FOCAL * v.right / v.fwd,
+    y: FPV_HORIZON - FPV_FOCAL * v.z / v.fwd,
+  };
+}
+function clipPolyNear(verts, near) {
+  const out = [];
+  for (let i = 0; i < verts.length; i++) {
+    const cur = verts[i];
+    const next = verts[(i + 1) % verts.length];
+    const curIn = cur.fwd >= near;
+    const nextIn = next.fwd >= near;
+    if (curIn) out.push(cur);
+    if (curIn !== nextIn) {
+      const t = (near - cur.fwd) / (next.fwd - cur.fwd);
+      out.push({
+        fwd: near,
+        right: cur.right + t * (next.right - cur.right),
+        z: cur.z + t * (next.z - cur.z),
+      });
+    }
+  }
+  return out;
+}
+function fillPolyWorld(worldPts, cam) {
+  const verts = worldPts.map(p => toCamSpace(p[0], p[1], p[2], cam));
+  const clipped = clipPolyNear(verts, FPV_NEAR);
+  if (clipped.length < 3) return false;
+  const projs = clipped.map(projectCam);
+  fpvCtx.beginPath();
+  fpvCtx.moveTo(projs[0].x, projs[0].y);
+  for (let i = 1; i < projs.length; i++) fpvCtx.lineTo(projs[i].x, projs[i].y);
+  fpvCtx.closePath();
+  fpvCtx.fill();
+  return true;
+}
+function strokePolyWorld(worldPts, cam) {
+  const verts = worldPts.map(p => toCamSpace(p[0], p[1], p[2], cam));
+  const clipped = clipPolyNear(verts, FPV_NEAR);
+  if (clipped.length < 2) return;
+  const projs = clipped.map(projectCam);
+  fpvCtx.beginPath();
+  fpvCtx.moveTo(projs[0].x, projs[0].y);
+  for (let i = 1; i < projs.length; i++) fpvCtx.lineTo(projs[i].x, projs[i].y);
+  fpvCtx.closePath();
+  fpvCtx.stroke();
+}
+function drawLineWorld(cam, p1, p2) {
+  const v1 = toCamSpace(p1[0], p1[1], p1[2], cam);
+  const v2 = toCamSpace(p2[0], p2[1], p2[2], cam);
+  if (v1.fwd < FPV_NEAR && v2.fwd < FPV_NEAR) return;
+  let a = v1, b = v2;
+  if (a.fwd < FPV_NEAR) {
+    const t = (FPV_NEAR - a.fwd) / (b.fwd - a.fwd);
+    a = { fwd: FPV_NEAR, right: a.right + t * (b.right - a.right), z: a.z + t * (b.z - a.z) };
+  }
+  if (b.fwd < FPV_NEAR) {
+    const t = (FPV_NEAR - b.fwd) / (a.fwd - b.fwd);
+    b = { fwd: FPV_NEAR, right: b.right + t * (a.right - b.right), z: b.z + t * (a.z - b.z) };
+  }
+  const pa = projectCam(a), pb = projectCam(b);
+  fpvCtx.beginPath();
+  fpvCtx.moveTo(pa.x, pa.y);
+  fpvCtx.lineTo(pb.x, pb.y);
+  fpvCtx.stroke();
+}
+function applyShade(hex, factor) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return "rgb(" + Math.round(r * factor) + "," + Math.round(g * factor) + "," + Math.round(b * factor) + ")";
+}
+
+function renderFPV() {
+  // sky gradient
+  const skyGrad = fpvCtx.createLinearGradient(0, 0, 0, FPV_HORIZON);
+  skyGrad.addColorStop(0, "#0a0b0e");
+  skyGrad.addColorStop(1, "#1a1c22");
+  fpvCtx.fillStyle = skyGrad;
+  fpvCtx.fillRect(0, 0, FPV_W, FPV_HORIZON);
+  // ground gradient
+  const grdGrad = fpvCtx.createLinearGradient(0, FPV_HORIZON, 0, FPV_H);
+  grdGrad.addColorStop(0, "#16171c");
+  grdGrad.addColorStop(1, "#0e0f12");
+  fpvCtx.fillStyle = grdGrad;
+  fpvCtx.fillRect(0, FPV_HORIZON, FPV_W, FPV_H - FPV_HORIZON);
+  // horizon line
+  fpvCtx.strokeStyle = "rgba(120,124,135,0.4)";
+  fpvCtx.lineWidth = 1;
+  fpvCtx.beginPath();
+  fpvCtx.moveTo(0, FPV_HORIZON);
+  fpvCtx.lineTo(FPV_W, FPV_HORIZON);
+  fpvCtx.stroke();
+
+  const focalCar = ix.drivingCar;
+  if (!focalCar || !focalCar.route) {
+    fpvCtx.fillStyle = "#666";
+    fpvCtx.font = "14px -apple-system, sans-serif";
+    fpvCtx.textAlign = "center";
+    fpvCtx.textBaseline = "middle";
+    fpvCtx.fillText(
+      "Pick source + destination on the mini-map, then Plan → Drive.",
+      FPV_W / 2, FPV_H / 2);
+    return;
+  }
+  // Smooth heading interpolation so intersections don't snap
+  if (focalCar._displayHeading == null) focalCar._displayHeading = focalCar.heading || 0;
+  let target = focalCar.heading || 0;
+  let delta = target - focalCar._displayHeading;
+  while (delta > Math.PI) delta -= 2 * Math.PI;
+  while (delta < -Math.PI) delta += 2 * Math.PI;
+  focalCar._displayHeading += delta * 0.18;
+
+  const cam = {
+    x: focalCar.pos.x,
+    y: focalCar.pos.y,
+    z: FPV_EYE_HEIGHT,
+    heading: focalCar._displayHeading,
+    cos: Math.cos(focalCar._displayHeading),
+    sin: Math.sin(focalCar._displayHeading),
+  };
+
+  drawRoadsFPV(cam);
+  drawBuildingsFPV(cam);
+  drawDynamicFPV(cam, focalCar);
+  drawFPVHUD(focalCar);
+}
+
+function drawRoadsFPV(cam) {
+  for (const k in edges) {
+    const e = edges[k];
+    const [ax, ay] = nodeXY(e.a);
+    const [bx, by] = nodeXY(e.b);
+    const midX = (ax + bx) / 2, midY = (ay + by) / 2;
+    if (Math.hypot(midX - cam.x, midY - cam.y) > FPV_FAR + CELL) continue;
+    const dx = bx - ax, dy = by - ay;
+    const len = Math.hypot(dx, dy);
+    if (len < 0.1) continue;
+    const px = -dy / len * FPV_ROAD_HALF;
+    const py = dx / len * FPV_ROAD_HALF;
+    fpvCtx.fillStyle = "#23252b";
+    fillPolyWorld(
+      [[ax + px, ay + py, 0], [bx + px, by + py, 0], [bx - px, by - py, 0], [ax - px, ay - py, 0]],
+      cam);
+    // dashed centerline
+    const dashCount = Math.floor(len / 14);
+    fpvCtx.strokeStyle = "rgba(160, 164, 173, 0.55)";
+    fpvCtx.lineWidth = 1.5;
+    for (let i = 1; i < dashCount; i += 2) {
+      const t1 = i / dashCount, t2 = (i + 1) / dashCount;
+      drawLineWorld(cam,
+        [ax + dx * t1, ay + dy * t1, 0],
+        [ax + dx * t2, ay + dy * t2, 0]);
+    }
+  }
+  // intersection plates
+  fpvCtx.fillStyle = "#2a2c33";
+  for (let r = 0; r < GRID_N; r++) {
+    for (let c = 0; c < GRID_N; c++) {
+      const [x, y] = nodeXY(nodeId(c, r));
+      if (Math.hypot(x - cam.x, y - cam.y) > FPV_FAR + CELL) continue;
+      const s = FPV_ROAD_HALF;
+      fillPolyWorld([[x - s, y - s, 0], [x + s, y - s, 0], [x + s, y + s, 0], [x - s, y + s, 0]], cam);
+    }
+  }
+}
+
+function drawBuildingsFPV(cam) {
+  const items = [];
+  for (const b of BUILDINGS) {
+    const [x, y] = nodeXY(nodeId(b.col, b.row));
+    const bSize = CELL - 10;
+    const bx = x + 5, by = y + 5;
+    const cx = bx + bSize / 2, cy = by + bSize / 2;
+    const dist = Math.hypot(cx - cam.x, cy - cam.y);
+    if (dist > FPV_FAR + CELL * 1.5) continue;
+    items.push({ b, bx, by, bSize, cx, cy, dist });
+  }
+  items.sort((a, b) => b.dist - a.dist);
+  for (const item of items) {
+    const { b, bx, by, bSize, cx, cy } = item;
+    const groundCorners = [
+      [bx, by], [bx + bSize, by], [bx + bSize, by + bSize], [bx, by + bSize],
+    ];
+    for (let i = 0; i < 4; i++) {
+      const g1 = groundCorners[i];
+      const g2 = groundCorners[(i + 1) % 4];
+      // face midpoint, normal points outward from building center
+      const mx = (g1[0] + g2[0]) / 2, my = (g1[1] + g2[1]) / 2;
+      const nx = mx - cx, ny = my - cy;
+      // camera-to-face vector
+      const tx = mx - cam.x, ty = my - cam.y;
+      // face is visible iff (face center - cam) dot (face normal) < 0
+      if (nx * tx + ny * ty >= 0) continue;
+      const shade = Math.max(0.45, 1 - item.dist / (FPV_FAR + CELL * 2));
+      fpvCtx.fillStyle = applyShade(b.color, shade);
+      fillPolyWorld(
+        [[g1[0], g1[1], 0], [g2[0], g2[1], 0], [g2[0], g2[1], FPV_BLDG_HEIGHT], [g1[0], g1[1], FPV_BLDG_HEIGHT]],
+        cam);
+      fpvCtx.strokeStyle = "rgba(255,255,255,0.32)";
+      fpvCtx.lineWidth = 1;
+      strokePolyWorld(
+        [[g1[0], g1[1], 0], [g2[0], g2[1], 0], [g2[0], g2[1], FPV_BLDG_HEIGHT], [g1[0], g1[1], FPV_BLDG_HEIGHT]],
+        cam);
+    }
+  }
+}
+
+function drawDynamicFPV(cam, focalCar) {
+  const items = [];
+  for (const c of cars) {
+    if (c === focalCar) continue;
+    if (c.state === "idle") continue;
+    const v = toCamSpace(c.pos.x, c.pos.y, 0, cam);
+    if (v.fwd < FPV_NEAR || v.fwd > FPV_FAR) continue;
+    // also filter by lateral extent so we don't draw cars off-screen
+    if (Math.abs(v.right) / v.fwd > 1.3) continue;
+    items.push({ type: "car", car: c, depth: v.fwd, v });
+  }
+  for (const o of ix.obstacles) {
+    if (!o.active) continue;
+    const v = toCamSpace(o.x, o.y, 0, cam);
+    if (v.fwd < FPV_NEAR || v.fwd > FPV_FAR) continue;
+    items.push({ type: "obstacle", obstacle: o, depth: v.fwd, v });
+  }
+  items.sort((a, b) => b.depth - a.depth);
+  for (const item of items) {
+    if (item.type === "car") drawCarFPV(item.car, item.v);
+    else drawJaywalkerFPV(item.obstacle, item.v);
+  }
+}
+
+function drawCarFPV(c, v) {
+  const ground = projectCam(v);
+  const sz = Math.min(110, 480 / Math.max(v.fwd, 1));
+  fpvCtx.fillStyle = c.color;
+  fpvCtx.fillRect(ground.x - sz / 2, ground.y - sz * 0.55, sz, sz * 0.55);
+  fpvCtx.strokeStyle = "rgba(0,0,0,0.7)";
+  fpvCtx.lineWidth = 1;
+  fpvCtx.strokeRect(ground.x - sz / 2, ground.y - sz * 0.55, sz, sz * 0.55);
+  fpvCtx.strokeStyle = "rgba(255,255,255,0.35)";
+  fpvCtx.lineWidth = 1;
+  fpvCtx.beginPath();
+  fpvCtx.moveTo(ground.x - sz / 2, ground.y - sz * 0.4);
+  fpvCtx.lineTo(ground.x + sz / 2, ground.y - sz * 0.4);
+  fpvCtx.stroke();
+  if (c.riders.length > 0) {
+    fpvCtx.fillStyle = "#fff";
+    fpvCtx.font = "bold " + Math.max(8, sz * 0.18) + "px -apple-system, sans-serif";
+    fpvCtx.textAlign = "center";
+    fpvCtx.textBaseline = "middle";
+    fpvCtx.fillText(String(c.riders.length), ground.x, ground.y - sz * 0.27);
+  }
+}
+
+function drawJaywalkerFPV(o, v) {
+  const p = projectCam(v);
+  const h = Math.min(240, 900 / Math.max(v.fwd, 1));
+  fpvCtx.strokeStyle = "#ef4444";
+  fpvCtx.lineWidth = Math.max(1.5, h / 50);
+  fpvCtx.beginPath();
+  fpvCtx.arc(p.x, p.y - h, h * 0.13, 0, Math.PI * 2);
+  fpvCtx.moveTo(p.x, p.y - h * 0.87);
+  fpvCtx.lineTo(p.x, p.y - h * 0.45);
+  fpvCtx.moveTo(p.x - h * 0.22, p.y - h * 0.65);
+  fpvCtx.lineTo(p.x + h * 0.22, p.y - h * 0.65);
+  fpvCtx.moveTo(p.x, p.y - h * 0.45);
+  fpvCtx.lineTo(p.x - h * 0.17, p.y);
+  fpvCtx.moveTo(p.x, p.y - h * 0.45);
+  fpvCtx.lineTo(p.x + h * 0.17, p.y);
+  fpvCtx.stroke();
+  fpvCtx.fillStyle = "#ef4444";
+  fpvCtx.font = "bold 11px -apple-system, sans-serif";
+  fpvCtx.textAlign = "center";
+  fpvCtx.textBaseline = "alphabetic";
+  fpvCtx.fillText(o.kind.toUpperCase(), p.x, p.y - h - 10);
+}
+
+function drawFPVHUD(car) {
+  fpvCtx.fillStyle = "rgba(0,0,0,0.6)";
+  fpvCtx.fillRect(8, 8, 220, 62);
+  fpvCtx.fillStyle = "#fff";
+  fpvCtx.font = "bold 12px -apple-system, sans-serif";
+  fpvCtx.textAlign = "left";
+  fpvCtx.textBaseline = "alphabetic";
+  fpvCtx.fillText(car.id + " · " + car.kind.toUpperCase(), 16, 26);
+  const stateLabel = {
+    enroute_pickup: "EN ROUTE → PICKUP",
+    enroute_dropoff: "EN ROUTE → DROPOFF",
+    obstacle_wait: "STOPPED · OBSTACLE",
+  }[car.state] || car.state.toUpperCase();
+  const stateColor = car.state === "obstacle_wait" ? "#ef4444" : "#14b8a6";
+  fpvCtx.fillStyle = stateColor;
+  fpvCtx.font = "11px -apple-system, sans-serif";
+  fpvCtx.fillText(stateLabel, 16, 44);
+  fpvCtx.fillStyle = "#bbb";
+  const blockTotal = car.route ? car.route.edges.length : 0;
+  fpvCtx.fillText("Block " + car.routeIndex + " / " + blockTotal, 16, 60);
+
+  if (car.state === "obstacle_wait") {
+    fpvCtx.fillStyle = "rgba(239, 68, 68, 0.18)";
+    fpvCtx.fillRect(0, 0, FPV_W, FPV_H);
+    fpvCtx.fillStyle = "#ef4444";
+    fpvCtx.font = "bold 22px -apple-system, sans-serif";
+    fpvCtx.textAlign = "center";
+    fpvCtx.fillText("BRAKE — OBSTACLE DETECTED", FPV_W / 2, FPV_H - 38);
+  }
+}
+
+// ============================================================
 // HUD
 // ============================================================
 function updateHUD() {
@@ -1263,11 +1627,12 @@ function tick() {
     checkSchedules();
     dispatch();
     stepCars(speedMult);
-  } else if (mode === "interactive" && ix.drivingCar) {
+  } else if ((mode === "interactive" || mode === "pov") && ix.drivingCar) {
     stepCars(speedMult, ix.drivingCar);
   }
   updateHUD();
   render();
+  if (mode === "pov") renderFPV();
 }
 
 document.getElementById("speed").addEventListener("input", (e) => {
@@ -1299,6 +1664,7 @@ document.getElementById("reset").addEventListener("click", () => {
 });
 document.getElementById("mode-auto").addEventListener("click", () => setMode("auto"));
 document.getElementById("mode-interactive").addEventListener("click", () => setMode("interactive"));
+document.getElementById("mode-pov").addEventListener("click", () => setMode("pov"));
 document.getElementById("debug").addEventListener("click", openDebugWindow);
 
 // ============================================================
