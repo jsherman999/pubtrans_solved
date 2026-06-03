@@ -1,6 +1,6 @@
 # pubtrans_solved
 
-A 2D simulation of a small metro area served by an LLM/agent-controlled fleet of autonomous vehicles (sedans + shuttles). 
+A 2D/3D simulation of a small metro area served by an LLM/agent-controlled fleet of autonomous vehicles (sedans + shuttles). 
 
 Goal: Demonstrate how autonomous driving/routing algorithms can & will work. Note this runs all in browser, so the simulation is small & simple
 
