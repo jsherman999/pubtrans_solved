@@ -8,17 +8,17 @@ Single-file HTML + Canvas + vanilla JS. no build step, package manager, dependen
 
 ## Screenshots
 
-Auto mode in flight, with the debug window open streaming dispatch, pickup, drop-off, traffic, and obstacle events:
+Auto mode in flight, with the debug window open streaming dispatch, pickup, drop-off, traffic, and obstacle events. Each car is an oval aligned with its travel direction — the white number at the leading edge is the car number (matches the `sed-N` / `shu-N` ids in the debug stream), the black number behind it is the current passenger count. Two parked trucks are visible on the curbs:
 
 ![Auto mode with debug window](docs/auto-mode-with-debug.png)
 
-Driver POV mode — wireframe first-person view alongside a mini-map, with a surge event banner announcing an outbound train at Central Station:
+Spectate — clicked shuttle `shu-4` on the grid and the FPV opened alongside a mini-map; sim continued at 1×. The HUD reads `EN ROUTE → DROPOFF @ Riverbend` and a `MANUAL-DRIVEN` obstacle (a non-fleet car) is sitting in the lane ahead. Sidebar's Spectating panel shows the focal car, its state, and rider count:
 
-![Driver POV with event banner](docs/driver-pov-event-banner.png)
+![Spectating shu-4 with a manual-driven car ahead](docs/spectate-shuttle-fpv.png)
 
-Interactive mode — three candidate routes drawn on the grid, plus Claude Sonnet 4.6 narration in the sidebar explaining why Route A was selected (lowest conflict count):
+Driver POV mode mid-trip — three candidate routes drawn on the mini-map (Route A highlighted green), Claude Sonnet 4.6 narration in the sidebar explaining the tiebreaker that selected Route A despite a three-way tie on the headline metrics, and the FPV showing the trip in progress with `EN ROUTE → DROPOFF @ Pine Row`:
 
-![Interactive plan with LLM narration](docs/interactive-plan-narration.png)
+![Driver POV with LLM narration](docs/driver-pov-narration.png)
 
 ## Install & run
 
