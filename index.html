@@ -1687,45 +1687,56 @@ function drawCars() {
       continue;
     }
     const x = car.pos.x, y = car.pos.y;
+    const heading = (car.heading != null) ? car.heading : 0;
+    const longR = car.kind === "sedan" ? 12 : 14;
+    const shortR = car.kind === "sedan" ? 6 : 7;
     // focal-car highlight + FPV view cone on mini-map
     if (car === getFocalCar() && (mode === "pov" || spectateCar) && car.heading != null) {
+      const camHead = (car._displayHeading != null) ? car._displayHeading : heading;
       ctx.fillStyle = "rgba(253, 224, 71, 0.18)";
       ctx.beginPath();
       ctx.moveTo(x, y);
       const spread = FPV_FOV_RAD / 2;
-      ctx.arc(x, y, 130, car.heading - spread, car.heading + spread);
+      ctx.arc(x, y, 130, camHead - spread, camHead + spread);
       ctx.closePath();
       ctx.fill();
       ctx.strokeStyle = "#fde047";
       ctx.lineWidth = 2;
       ctx.beginPath();
-      ctx.arc(x, y, 11, 0, Math.PI * 2);
+      ctx.ellipse(x, y, longR + 3, shortR + 3, heading, 0, Math.PI * 2);
       ctx.stroke();
     }
-    // body
-    const radius = car.kind === "sedan" ? 5.5 : 7.5;
+    // body — oval aligned with heading
     ctx.fillStyle = car.color;
     ctx.beginPath();
-    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.ellipse(x, y, longR, shortR, heading, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = "rgba(0,0,0,0.4)";
+    ctx.strokeStyle = "rgba(0,0,0,0.5)";
     ctx.lineWidth = 1;
     ctx.stroke();
-    // rider count
+    // car number (white) at front, passenger count (black) at back
+    const carNum = car.id.split("-")[1] || "?";
+    const offF = longR * 0.55;
+    const fx = x + Math.cos(heading) * offF;
+    const fy = y + Math.sin(heading) * offF;
+    ctx.font = "bold 9px -apple-system, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = "#fff";
+    ctx.fillText(carNum, fx, fy);
     if (car.riders.length > 0) {
-      ctx.fillStyle = "#fff";
-      ctx.font = "bold 9px -apple-system, sans-serif";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(String(car.riders.length), x, y + 0.5);
+      const bx = x - Math.cos(heading) * offF;
+      const by = y - Math.sin(heading) * offF;
+      ctx.fillStyle = "#000";
+      ctx.fillText(String(car.riders.length), bx, by);
     }
-    // sensor cone (interactive car only)
-    if (car.interactive && car.sensorActive) {
+    // sensor cone (Interactive mode driving car — no FPV to show it in)
+    if (car.interactive && car.sensorActive && mode === "interactive") {
       ctx.fillStyle = COLORS.sensorCone;
       ctx.beginPath();
       ctx.moveTo(x, y);
       const spread = Math.PI / 5;
-      ctx.arc(x, y, SENSOR_RANGE_PX, car.heading - spread, car.heading + spread);
+      ctx.arc(x, y, SENSOR_RANGE_PX, heading - spread, heading + spread);
       ctx.closePath();
       ctx.fill();
     }
@@ -2202,7 +2213,7 @@ function drawDynamicFPV(cam, focalCar) {
 
 function drawCarFPV(c, v, cam) {
   const ground = projectCam(v);
-  const w = Math.min(350, 2400 / Math.max(v.fwd, 1));
+  const w = Math.min(400, 3000 / Math.max(v.fwd, 1));
   const carH = w * 0.65;
   const bodyTop = ground.y - carH;
   const bodyL = ground.x - w / 2;
@@ -2254,13 +2265,17 @@ function drawCarFPV(c, v, cam) {
       fpvCtx.fill();
     }
   }
-  // rider count
+  // car number (white, on top) + passenger count (black, under) inside the body
+  const carNum = c.id.split("-")[1] || "?";
+  fpvCtx.textAlign = "center";
+  fpvCtx.textBaseline = "middle";
+  fpvCtx.fillStyle = "#fff";
+  fpvCtx.font = "bold " + Math.max(11, w * 0.20) + "px -apple-system, sans-serif";
+  fpvCtx.fillText(carNum, ground.x, bodyTop + carH * 0.26);
   if (c.riders.length > 0) {
-    fpvCtx.fillStyle = "#fff";
-    fpvCtx.font = "bold " + Math.max(10, w * 0.18) + "px -apple-system, sans-serif";
-    fpvCtx.textAlign = "center";
-    fpvCtx.textBaseline = "middle";
-    fpvCtx.fillText(String(c.riders.length), ground.x, bodyTop + carH * 0.30);
+    fpvCtx.fillStyle = "#000";
+    fpvCtx.font = "bold " + Math.max(10, w * 0.16) + "px -apple-system, sans-serif";
+    fpvCtx.fillText(String(c.riders.length), ground.x, bodyTop + carH * 0.62);
   }
 }
 
@@ -2353,20 +2368,42 @@ function drawManualCarFPV(p, depth) {
   fpvCtx.fillText("MANUAL-DRIVEN", p.x, p.y - h - 8);
 }
 
+function focalDestName(car) {
+  if (car === ix.drivingCar && ix.dest) return ix.dest.name;
+  if (car._activeSeg) {
+    if (car._activeSeg.type === "pickup") return car._activeSeg.req.from.name;
+    if (car._activeSeg.type === "dropoff_all" && car.riders.length > 0) {
+      return car.riders[0].to.name;
+    }
+  }
+  if (car.state === "enroute_pickup" && car.pickupQueue.length > 0) {
+    return car.pickupQueue[0].from.name;
+  }
+  if (car.state === "enroute_dropoff") {
+    if (car.riders.length > 0 && car.riders[0].to) return car.riders[0].to.name;
+    if (car.pickupQueue.length > 0 && car.pickupQueue[0].to) return car.pickupQueue[0].to.name;
+  }
+  return null;
+}
+
 function drawFPVHUD(car) {
-  fpvCtx.fillStyle = "rgba(0,0,0,0.6)";
-  fpvCtx.fillRect(8, 8, 220, 62);
+  fpvCtx.fillStyle = "rgba(0,0,0,0.65)";
+  fpvCtx.fillRect(8, 8, 300, 62);
   fpvCtx.fillStyle = "#fff";
   fpvCtx.font = "bold 12px -apple-system, sans-serif";
   fpvCtx.textAlign = "left";
   fpvCtx.textBaseline = "alphabetic";
   fpvCtx.fillText(car.id + " · " + car.kind.toUpperCase(), 16, 26);
-  const stateLabel = {
+  const baseLabel = {
     enroute_pickup: "EN ROUTE → PICKUP",
     enroute_dropoff: "EN ROUTE → DROPOFF",
     obstacle_wait: "STOPPED · OBSTACLE",
+    redlight_wait: "STOPPED · RED LIGHT",
+    stopsign_wait: "STOPPED · STOP SIGN",
   }[car.state] || car.state.toUpperCase();
-  const stateColor = car.state === "obstacle_wait" ? "#ef4444" : "#14b8a6";
+  const dest = focalDestName(car);
+  const stateLabel = dest ? (baseLabel + " @ " + dest) : baseLabel;
+  const stateColor = (car.state === "obstacle_wait" || car.state === "redlight_wait" || car.state === "stopsign_wait") ? "#ef4444" : "#14b8a6";
   fpvCtx.fillStyle = stateColor;
   fpvCtx.font = "11px -apple-system, sans-serif";
   fpvCtx.fillText(stateLabel, 16, 44);
