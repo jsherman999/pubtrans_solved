@@ -67,6 +67,8 @@ Priority order: (1) safety, (2) fastest route for this rider, (3) avoid system g
 - Speed slider, time-of-day clock, runs a full simulated day
 - HUD: active rides, completed rides, avg trip time, **gridlock score** (mean edge congestion)
 - City visibly hums with sedans and shuttles satisfying schedule-driven demand
+- **Random obstacles spawn periodically** (~every 4–12s) on the street grid: jaywalkers, parked trucks, manual-driven cars — all cars in the fleet sense and react with the same kind-specific behaviors as in Driver POV mode (jaywalker brake-and-wait, truck detour, manual car slow-follow)
+- **Spectate**: click any active car on the grid → POV opens for that car alongside a mini-map (speed auto-drops to 1×); auto continues running, you watch traffic / pickups / dropoffs / obstacle reactions from inside the chosen car. Click another car to switch; **Exit POV** returns to full-map view. If the spectated car finishes its trip, the FPV stays parked at the drop-off until you pick a new car.
 
 ### Interactive mode
 - User clicks source on map, then destination

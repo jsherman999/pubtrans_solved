@@ -14,7 +14,7 @@ Open `index.html` in any modern browser. No install, no build step.
 
 ## Two modes
 
-**Auto** — a sped-up simulated day. The city hums with cars satisfying schedule-driven demand. HUD shows active rides, completed rides, average trip time, and a live gridlock score.
+**Auto** — a sped-up simulated day. The city hums with cars satisfying schedule-driven demand. HUD shows active rides, completed rides, average trip time, and a live gridlock score. Random obstacles (jaywalkers, parked trucks, manual-driven cars) spawn on the grid and every car senses and reacts — same kind-specific behaviors as in Driver POV. **Click any active car** to spectate it: a POV opens for that car alongside a mini-map and the sim continues at 1×. Click another car to switch, or **Exit POV** to return.
 
 **Interactive** — click a source then destination. The agent's decision is walked through step-by-step: candidate routes, conflict analysis, chosen route, then a simulated trip with scripted obstacles (jaywalker, parked truck, manual-driven car) demonstrating sensor avoidance and on-the-fly replan.
 

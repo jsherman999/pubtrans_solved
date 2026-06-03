@@ -67,6 +67,15 @@ input[type=password]:focus, input[type=text]:focus { outline: none; border-color
       <h3>Controls</h3>
       <div class="row"><label>Speed</label><input type="range" id="speed" min="1" max="20" value="5"><span id="speed-val" style="min-width:32px;text-align:right">5×</span></div>
       <div class="btn-row"><button id="pause">Pause</button><button id="reset">Reset day</button></div>
+      <p class="hint small" style="margin-top:8px">Click any active car on the map to spectate it (POV opens, speed drops to 1×).</p>
+    </section>
+
+    <section id="spectate-info" hidden>
+      <h3>Spectating</h3>
+      <div class="row"><span>Car</span><span id="spec-car">—</span></div>
+      <div class="row"><span>State</span><span id="spec-state">—</span></div>
+      <div class="row"><span>Riders</span><span id="spec-riders">—</span></div>
+      <div class="btn-row"><button id="exit-spectate">Exit POV</button></div>
     </section>
 
     <section class="hud">
@@ -635,9 +644,7 @@ function stepCars(speedMult, filterCar = null) {
       edges[k].claims.delete(car.id);
       car.routeIndex++;
       if (car.routeIndex < car.route.nodes.length) car.nodeId = car.route.nodes[car.routeIndex];
-      if (car.interactive && car.sensorActive) {
-        if (checkObstacle(car)) break;
-      }
+      if (checkObstacle(car)) break;
       if (car.routeIndex >= car.route.edges.length) {
         arriveAtRouteEnd(car);
         break;
@@ -723,6 +730,7 @@ function finishTrip(car) {
   car._slowedTicks = 0;
   car._obstacleKind = null;
   car._obstacle = null;
+  car._stateBeforeObstacle = null;
   if (car.interactive) {
     car.interactive = false;
     car.sensorActive = false;
@@ -733,6 +741,7 @@ function finishTrip(car) {
 // Interactive mode + scripted obstacles
 // ============================================================
 let mode = "auto";
+let spectateCar = null;
 const ix = {
   source: null,
   dest: null,
@@ -741,8 +750,51 @@ const ix = {
   drivingCar: null,
   obstacles: [],
 };
+function getFocalCar() { return spectateCar || ix.drivingCar; }
+
+function pickCarAt(x, y) {
+  let best = null, bestDist = Infinity;
+  const radius = 16;
+  for (const car of cars) {
+    if (car.state === "idle") continue;
+    const dx = car.pos.x - x, dy = car.pos.y - y;
+    const d = Math.hypot(dx, dy);
+    if (d < radius && d < bestDist) { best = car; bestDist = d; }
+  }
+  return best;
+}
+
+function startSpectate(car) {
+  spectateCar = car;
+  if (car.heading == null) car.heading = 0;
+  car._displayHeading = car.heading;
+  if (speedMult > 1) {
+    speedMult = 1;
+    const sl = document.getElementById("speed");
+    const sv = document.getElementById("speed-val");
+    if (sl) sl.value = 1;
+    if (sv) sv.textContent = "1×";
+  }
+  paused = false;
+  document.getElementById("pause").textContent = "Pause";
+  document.getElementById("spectate-info").hidden = false;
+  document.querySelector(".canvas-wrap").classList.add("pov-mode");
+  dbg("SYSTEM", "spectating " + car.id + " (" + car.kind + ")");
+}
+
+function stopSpectate() {
+  if (!spectateCar) return;
+  dbg("SYSTEM", "exited spectate of " + spectateCar.id);
+  spectateCar = null;
+  document.getElementById("spectate-info").hidden = true;
+  if (mode === "auto") {
+    document.querySelector(".canvas-wrap").classList.remove("pov-mode");
+  }
+}
 
 function setMode(m) {
+  if (mode === m) return;
+  if (spectateCar && m !== "auto") stopSpectate();
   mode = m;
   const isIx = (m === "interactive" || m === "pov");
   document.getElementById("mode-auto").classList.toggle("active", m === "auto");
@@ -803,11 +855,16 @@ function pickClosestBuilding(x, y) {
 
 const canvas = document.getElementById("map");
 canvas.addEventListener("click", (e) => {
-  if (mode !== "interactive" && mode !== "pov") return;
-  if (ix.drivingCar) return; // already driving
   const rect = canvas.getBoundingClientRect();
   const x = (e.clientX - rect.left) * (canvas.width / rect.width);
   const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+  if (mode === "auto") {
+    const car = pickCarAt(x, y);
+    if (car) startSpectate(car);
+    return;
+  }
+  if (mode !== "interactive" && mode !== "pov") return;
+  if (ix.drivingCar) return; // already driving
   const b = pickClosestBuilding(x, y);
   if (!b) return;
   if (!ix.source) {
@@ -949,11 +1006,11 @@ function scheduleObstacles(route) {
     const o = {
       x: midX, y: midY,
       kind,
-      triggerEdgeIdx: idx,
-      banEdge: route.edges[idx],
+      edgeKey: route.edges[idx],
       active: false,
       handled: false,
       perpX, perpY,
+      tripScoped: true,
     };
     if (kind === "jaywalker") {
       o.crossStart = { x: midX - perpX * 22, y: midY - perpY * 22 };
@@ -971,41 +1028,45 @@ function scheduleObstacles(route) {
 }
 
 function checkObstacle(car) {
+  if (!car.route || car.routeIndex >= car.route.edges.length) return false;
+  const nextEdge = car.route.edges[car.routeIndex];
   for (const o of ix.obstacles) {
-    if (o.handled) continue;
-    if (car.routeIndex === o.triggerEdgeIdx) {
-      o.active = true;
-      o.handled = true;
-      car.state = "obstacle_wait";
-      car._obstacleKind = o.kind;
-      car._obstacle = o;
-      const narrEl = document.getElementById("ix-narration");
-      narrEl.classList.remove("placeholder");
-      if (o.kind === "jaywalker") {
-        car._obstacleTimer = 25;
-        car._banEdge = null;
-        o.crossT = 0;
-        dbg("OBSTACLE", car.id + " sensor cone detected jaywalker stepping into the road · braking");
-        narrEl.textContent =
-          "Sensor cone detected a jaywalker stepping into the road. " +
-          "Braking to let them clear (same route resumes after).";
-      } else if (o.kind === "parked truck") {
-        car._obstacleTimer = 12;
-        car._banEdge = o.banEdge;
-        dbg("OBSTACLE", car.id + " sensor cone detected parked truck on edge " + o.banEdge + " · computing detour");
-        narrEl.textContent =
-          "Sensor cone detected a parked truck blocking the lane. " +
-          "Stationary obstacle — computing a detour around it.";
-      } else {
-        car._obstacleTimer = 10;
-        car._banEdge = null;
-        dbg("OBSTACLE", car.id + " sensor cone detected manual-driven car ahead · braking to follow safely");
-        narrEl.textContent =
-          "Sensor cone detected a manual-driven car ahead. " +
-          "Slowing to a safe following distance — no detour needed.";
-      }
-      return true;
+    if (!o.active) continue;
+    // jaywalker/manual car are one-shot per spawn; parked truck triggers each car
+    if (o.handled && o.kind !== "parked truck") continue;
+    if (o.edgeKey !== nextEdge) continue;
+    if (o.kind !== "parked truck") o.handled = true;
+    car._stateBeforeObstacle = car.state;
+    car.state = "obstacle_wait";
+    car._obstacleKind = o.kind;
+    car._obstacle = o;
+    const isFocal = (car === ix.drivingCar);
+    const narrEl = isFocal ? document.getElementById("ix-narration") : null;
+    if (narrEl) narrEl.classList.remove("placeholder");
+    if (o.kind === "jaywalker") {
+      car._obstacleTimer = 25;
+      car._banEdge = null;
+      o.crossT = 0;
+      dbg("OBSTACLE", car.id + " sensor cone detected jaywalker stepping into the road · braking");
+      if (narrEl) narrEl.textContent =
+        "Sensor cone detected a jaywalker stepping into the road. " +
+        "Braking to let them clear (same route resumes after).";
+    } else if (o.kind === "parked truck") {
+      car._obstacleTimer = 12;
+      car._banEdge = o.edgeKey;
+      dbg("OBSTACLE", car.id + " sensor cone detected parked truck on edge " + o.edgeKey + " · computing detour");
+      if (narrEl) narrEl.textContent =
+        "Sensor cone detected a parked truck blocking the lane. " +
+        "Stationary obstacle — computing a detour around it.";
+    } else {
+      car._obstacleTimer = 10;
+      car._banEdge = null;
+      dbg("OBSTACLE", car.id + " sensor cone detected manual-driven car ahead · braking to follow safely");
+      if (narrEl) narrEl.textContent =
+        "Sensor cone detected a manual-driven car ahead. " +
+        "Slowing to a safe following distance — no detour needed.";
     }
+    return true;
   }
   return false;
 }
@@ -1013,33 +1074,39 @@ function checkObstacle(car) {
 function resolveObstacle(car) {
   const kind = car._obstacleKind;
   const o = car._obstacle;
-  const narrEl = document.getElementById("ix-narration");
+  const prevState = car._stateBeforeObstacle || "enroute_dropoff";
+  const isFocal = (car === ix.drivingCar);
+  const narrEl = isFocal ? document.getElementById("ix-narration") : null;
+  car._stateBeforeObstacle = null;
 
   if (kind === "parked truck") {
+    // Current segment's destination = last node on the current route
+    let dst = null;
+    if (car.route && car.route.nodes.length > 0) {
+      dst = car.route.nodes[car.route.nodes.length - 1];
+    }
     releaseRemaining(car);
-    const dst = ix.dest ? ix.dest.accessId : null;
     if (dst != null) {
       const newRoute = dijkstra(car.nodeId, dst, car._banEdge);
       if (newRoute) {
         claimRoute(car, newRoute);
         setRoute(car, newRoute);
-        car.state = "enroute_dropoff";
+        car.state = prevState;
         dbg("REPLAN", car.id + " detoured around parked truck on edge " + car._banEdge +
-          " · " + newRoute.edges.length + " blocks to " + (ix.dest ? ix.dest.name : "destination") +
-          " (cost " + newRoute.cost.toFixed(1) + ")");
+          " · " + newRoute.edges.length + " blocks (cost " + newRoute.cost.toFixed(1) + ")");
         if (narrEl) narrEl.textContent +=
           " Detour found — " + newRoute.edges.length + " blocks remaining. Truck stays parked.";
         return;
       }
       dbg("REPLAN", car.id + " no detour available around parked truck · continuing on banned edge");
     }
-    car.state = "enroute_dropoff";
+    car.state = prevState;
     return;
   }
 
   if (kind === "jaywalker") {
     if (o) o.active = false;
-    car.state = "enroute_dropoff";
+    car.state = prevState;
     const remaining = car.route ? (car.route.edges.length - car.routeIndex) : 0;
     dbg("REPLAN", car.id + " jaywalker cleared the road · resuming on same route (" + remaining + " blocks remaining)");
     if (narrEl) narrEl.textContent += " Jaywalker cleared the road — resuming on same route.";
@@ -1048,22 +1115,91 @@ function resolveObstacle(car) {
 
   if (kind === "manual-driven car") {
     car._slowedTicks = 30;
-    car.state = "enroute_dropoff";
+    car.state = prevState;
     if (o) o.active = false;
     dbg("REPLAN", car.id + " safe following distance established · resuming at 40% speed for ~30 ticks");
     if (narrEl) narrEl.textContent += " Safe following distance established — resuming at reduced speed.";
     return;
   }
 
-  car.state = "enroute_dropoff";
+  car.state = prevState;
+}
+
+let autoObstacleSpawnTimer = 60;
+
+function spawnAutoObstacle() {
+  let active = 0;
+  for (const o of ix.obstacles) if (o.active) active++;
+  if (active >= 6) return;
+  const edgeKeys = Object.keys(edges);
+  const occupied = new Set();
+  for (const o of ix.obstacles) if (o.active) occupied.add(o.edgeKey);
+  const available = edgeKeys.filter(k => !occupied.has(k));
+  if (available.length === 0) return;
+  const k = available[Math.floor(Math.random() * available.length)];
+  const e = edges[k];
+  const [ax, ay] = nodeXY(e.a);
+  const [bx, by] = nodeXY(e.b);
+  const ex = bx - ax, ey = by - ay;
+  const elen = Math.hypot(ex, ey) || 1;
+  const perpX = -ey / elen, perpY = ex / elen;
+  const midX = (ax + bx) / 2, midY = (ay + by) / 2;
+  const kinds = ["jaywalker", "parked truck", "manual-driven car"];
+  const kind = kinds[Math.floor(Math.random() * kinds.length)];
+  const o = {
+    x: midX, y: midY,
+    kind,
+    edgeKey: k,
+    active: true,
+    handled: false,
+    perpX, perpY,
+    autoSpawned: true,
+  };
+  if (kind === "jaywalker") {
+    o.crossStart = { x: midX - perpX * 22, y: midY - perpY * 22 };
+    o.crossEnd   = { x: midX + perpX * 22, y: midY + perpY * 22 };
+    o.crossT = 0;
+    o.x = o.crossStart.x;
+    o.y = o.crossStart.y;
+    o.lifetime = 60;
+  } else if (kind === "parked truck") {
+    o.x = midX + perpX * 8;
+    o.y = midY + perpY * 8;
+    o.lifetime = 400;
+  } else {
+    o.lifetime = 80;
+  }
+  ix.obstacles.push(o);
+  dbg("OBSTACLE", "spawned " + kind + " on edge " + k);
+}
+
+function tickAutoObstacles() {
+  autoObstacleSpawnTimer--;
+  if (autoObstacleSpawnTimer <= 0) {
+    spawnAutoObstacle();
+    autoObstacleSpawnTimer = 40 + Math.floor(Math.random() * 80);
+  }
 }
 
 function updateObstacles() {
-  for (const o of ix.obstacles) {
-    if (!o.active || o.kind !== "jaywalker") continue;
-    o.crossT = Math.min(1, (o.crossT || 0) + 1 / 25);
-    o.x = o.crossStart.x + (o.crossEnd.x - o.crossStart.x) * o.crossT;
-    o.y = o.crossStart.y + (o.crossEnd.y - o.crossStart.y) * o.crossT;
+  for (let i = ix.obstacles.length - 1; i >= 0; i--) {
+    const o = ix.obstacles[i];
+    if (!o.active) {
+      o.deadTicks = (o.deadTicks || 0) + 1;
+      if (o.deadTicks > 40) ix.obstacles.splice(i, 1);
+      continue;
+    }
+    if (o.lifetime != null) {
+      o.lifetime--;
+      if (o.lifetime <= 0) { o.active = false; continue; }
+    }
+    if (o.kind === "jaywalker") {
+      o.crossT = Math.min(1, (o.crossT || 0) + 1 / 25);
+      o.x = o.crossStart.x + (o.crossEnd.x - o.crossStart.x) * o.crossT;
+      o.y = o.crossStart.y + (o.crossEnd.y - o.crossStart.y) * o.crossT;
+      // un-triggered jaywalker that finished crossing on its own: fade
+      if (o.crossT >= 1 && !o.handled) o.active = false;
+    }
   }
 }
 
@@ -1143,9 +1279,9 @@ function render() {
   drawStreets();
   drawCongestion();
   drawBuildings();
-  if (mode === "interactive") drawInteractiveOverlay();
+  if (mode === "interactive" || mode === "pov") drawInteractiveOverlay();
   drawCars();
-  if (mode === "interactive") drawObstacles();
+  drawObstacles();
 }
 
 function drawStreets() {
@@ -1228,7 +1364,7 @@ function drawCars() {
     }
     const x = car.pos.x, y = car.pos.y;
     // focal-car highlight + FPV view cone on mini-map
-    if (mode === "pov" && car === ix.drivingCar && car.heading != null) {
+    if (car === getFocalCar() && (mode === "pov" || spectateCar) && car.heading != null) {
       ctx.fillStyle = "rgba(253, 224, 71, 0.18)";
       ctx.beginPath();
       ctx.moveTo(x, y);
@@ -1461,15 +1597,16 @@ function renderFPV() {
   fpvCtx.lineTo(FPV_W, FPV_HORIZON);
   fpvCtx.stroke();
 
-  const focalCar = ix.drivingCar;
-  if (!focalCar || !focalCar.route) {
+  const focalCar = getFocalCar();
+  if (!focalCar) {
     fpvCtx.fillStyle = "#666";
     fpvCtx.font = "14px -apple-system, sans-serif";
     fpvCtx.textAlign = "center";
     fpvCtx.textBaseline = "middle";
-    fpvCtx.fillText(
-      "Pick source + destination on the mini-map, then Plan → Drive.",
-      FPV_W / 2, FPV_H / 2);
+    const hint = (mode === "pov")
+      ? "Pick source + destination on the mini-map, then Plan → Drive."
+      : "Click a car on the mini-map to spectate.";
+    fpvCtx.fillText(hint, FPV_W / 2, FPV_H / 2);
     return;
   }
   // Smooth heading interpolation so intersections don't snap
@@ -1763,6 +1900,11 @@ function updateHUD() {
   for (const k in edges) totalClaims += edges[k].claims.size;
   const gridlock = totalClaims / N_EDGES;
   document.getElementById("gridlock").textContent = gridlock.toFixed(2);
+  if (spectateCar) {
+    document.getElementById("spec-car").textContent = spectateCar.id + " (" + spectateCar.kind + ")";
+    document.getElementById("spec-state").textContent = spectateCar.state.replace(/_/g, " ");
+    document.getElementById("spec-riders").textContent = spectateCar.riders.length + " / " + spectateCar.capacity;
+  }
 }
 
 // ============================================================
@@ -1779,13 +1921,15 @@ function tick() {
     checkSchedules();
     dispatch();
     stepCars(speedMult);
+    tickAutoObstacles();
+    updateObstacles();
   } else if ((mode === "interactive" || mode === "pov") && ix.drivingCar) {
     stepCars(speedMult, ix.drivingCar);
     updateObstacles();
   }
   updateHUD();
   render();
-  if (mode === "pov") renderFPV();
+  if (mode === "pov" || (mode === "auto" && spectateCar)) renderFPV();
 }
 
 document.getElementById("speed").addEventListener("input", (e) => {
@@ -1797,10 +1941,13 @@ document.getElementById("pause").addEventListener("click", () => {
   document.getElementById("pause").textContent = paused ? "Resume" : "Pause";
 });
 document.getElementById("reset").addEventListener("click", () => {
+  if (spectateCar) stopSpectate();
   simMinute = 6 * 60 + 30;
   queue.length = 0;
   completedTrips.length = 0;
   pooledCount = 0;
+  ix.obstacles = [];
+  autoObstacleSpawnTimer = 60;
   for (const c of cars) {
     c.state = "idle";
     c.route = null;
@@ -1812,6 +1959,7 @@ document.getElementById("reset").addEventListener("click", () => {
     c._slowedTicks = 0;
     c._obstacleKind = null;
     c._obstacle = null;
+    c._stateBeforeObstacle = null;
     c.interactive = false;
     c.sensorActive = false;
   }
@@ -1822,6 +1970,7 @@ document.getElementById("mode-auto").addEventListener("click", () => setMode("au
 document.getElementById("mode-interactive").addEventListener("click", () => setMode("interactive"));
 document.getElementById("mode-pov").addEventListener("click", () => setMode("pov"));
 document.getElementById("debug").addEventListener("click", openDebugWindow);
+document.getElementById("exit-spectate").addEventListener("click", stopSpectate);
 
 // ============================================================
 // Init
