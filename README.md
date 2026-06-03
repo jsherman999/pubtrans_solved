@@ -6,6 +6,20 @@ Goal: Demonstrate how autonomous driving/routing algorithms can & will work. Not
 
 Single-file HTML + Canvas + vanilla JS. no build step, package manager, dependencies.
 
+## Screenshots
+
+Auto mode in flight, with the debug window open streaming dispatch, pickup, drop-off, traffic, and obstacle events:
+
+![Auto mode with debug window](docs/auto-mode-with-debug.png)
+
+Driver POV mode — wireframe first-person view alongside a mini-map, with a surge event banner announcing an outbound train at Central Station:
+
+![Driver POV with event banner](docs/driver-pov-event-banner.png)
+
+Interactive mode — three candidate routes drawn on the grid, plus Claude Sonnet 4.6 narration in the sidebar explaining why Route A was selected (lowest conflict count):
+
+![Interactive plan with LLM narration](docs/interactive-plan-narration.png)
+
 ## Install & run
 
 ```bash
