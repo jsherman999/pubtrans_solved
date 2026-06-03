@@ -613,19 +613,21 @@ function assignShuttle(car, reqs) {
 // Movement
 // ============================================================
 function stepCars(speedMult, filterCar = null) {
-  const baseStep = 0.05 * speedMult;
   for (const car of cars) {
     if (filterCar && car !== filterCar) continue;
     if (car.state === "idle") continue;
     if (car.state === "obstacle_wait") {
       car._obstacleTimer -= 1;
-      if (car._obstacleTimer <= 0) replanAroundObstacle(car);
+      if (car._obstacleTimer <= 0) resolveObstacle(car);
       continue;
     }
     if (!car.route || car.routeIndex >= car.route.edges.length) {
       arriveAtRouteEnd(car);
       continue;
     }
+    const slowFactor = (car._slowedTicks > 0) ? 0.4 : 1;
+    if (car._slowedTicks > 0) car._slowedTicks--;
+    const baseStep = 0.05 * speedMult * slowFactor;
     car.progress += baseStep;
     while (car.progress >= 1 && car.routeIndex < car.route.edges.length) {
       car.progress -= 1;
@@ -718,6 +720,9 @@ function finishTrip(car) {
   car._segments = null;
   car._activeSeg = null;
   car._toDropoffRoute = null;
+  car._slowedTicks = 0;
+  car._obstacleKind = null;
+  car._obstacle = null;
   if (car.interactive) {
     car.interactive = false;
     car.sensorActive = false;
@@ -936,15 +941,32 @@ function scheduleObstacles(route) {
     if (a == null || b == null) continue;
     const [ax, ay] = nodeXY(a);
     const [bx, by] = nodeXY(b);
-    ix.obstacles.push({
-      x: (ax + bx) / 2,
-      y: (ay + by) / 2,
-      kind: kinds[i % kinds.length],
+    const ex = bx - ax, ey = by - ay;
+    const elen = Math.hypot(ex, ey) || 1;
+    const perpX = -ey / elen, perpY = ex / elen;
+    const midX = (ax + bx) / 2, midY = (ay + by) / 2;
+    const kind = kinds[i % kinds.length];
+    const o = {
+      x: midX, y: midY,
+      kind,
       triggerEdgeIdx: idx,
       banEdge: route.edges[idx],
       active: false,
       handled: false,
-    });
+      perpX, perpY,
+    };
+    if (kind === "jaywalker") {
+      o.crossStart = { x: midX - perpX * 22, y: midY - perpY * 22 };
+      o.crossEnd   = { x: midX + perpX * 22, y: midY + perpY * 22 };
+      o.crossT = 0;
+      o.x = o.crossStart.x;
+      o.y = o.crossStart.y;
+    } else if (kind === "parked truck") {
+      // truck sits on the curb side, not centered in the lane
+      o.x = midX + perpX * 8;
+      o.y = midY + perpY * 8;
+    }
+    ix.obstacles.push(o);
   }
 }
 
@@ -955,43 +977,93 @@ function checkObstacle(car) {
       o.active = true;
       o.handled = true;
       car.state = "obstacle_wait";
-      car._obstacleTimer = 12;
-      car._banEdge = o.banEdge;
-      dbg("OBSTACLE", car.id + " sensor cone detected " + o.kind +
-        " on edge " + o.banEdge + " · stopping for replan");
+      car._obstacleKind = o.kind;
+      car._obstacle = o;
       const narrEl = document.getElementById("ix-narration");
       narrEl.classList.remove("placeholder");
-      narrEl.textContent =
-        "Sensor cone detected a " + o.kind + " on the next segment. Stopping. " +
-        "Computing a detour that avoids that edge…";
+      if (o.kind === "jaywalker") {
+        car._obstacleTimer = 25;
+        car._banEdge = null;
+        o.crossT = 0;
+        dbg("OBSTACLE", car.id + " sensor cone detected jaywalker stepping into the road · braking");
+        narrEl.textContent =
+          "Sensor cone detected a jaywalker stepping into the road. " +
+          "Braking to let them clear (same route resumes after).";
+      } else if (o.kind === "parked truck") {
+        car._obstacleTimer = 12;
+        car._banEdge = o.banEdge;
+        dbg("OBSTACLE", car.id + " sensor cone detected parked truck on edge " + o.banEdge + " · computing detour");
+        narrEl.textContent =
+          "Sensor cone detected a parked truck blocking the lane. " +
+          "Stationary obstacle — computing a detour around it.";
+      } else {
+        car._obstacleTimer = 10;
+        car._banEdge = null;
+        dbg("OBSTACLE", car.id + " sensor cone detected manual-driven car ahead · braking to follow safely");
+        narrEl.textContent =
+          "Sensor cone detected a manual-driven car ahead. " +
+          "Slowing to a safe following distance — no detour needed.";
+      }
       return true;
     }
   }
   return false;
 }
 
-function replanAroundObstacle(car) {
-  releaseRemaining(car);
-  const dst = ix.dest ? ix.dest.accessId : null;
-  if (dst == null) {
+function resolveObstacle(car) {
+  const kind = car._obstacleKind;
+  const o = car._obstacle;
+  const narrEl = document.getElementById("ix-narration");
+
+  if (kind === "parked truck") {
+    releaseRemaining(car);
+    const dst = ix.dest ? ix.dest.accessId : null;
+    if (dst != null) {
+      const newRoute = dijkstra(car.nodeId, dst, car._banEdge);
+      if (newRoute) {
+        claimRoute(car, newRoute);
+        setRoute(car, newRoute);
+        car.state = "enroute_dropoff";
+        dbg("REPLAN", car.id + " detoured around parked truck on edge " + car._banEdge +
+          " · " + newRoute.edges.length + " blocks to " + (ix.dest ? ix.dest.name : "destination") +
+          " (cost " + newRoute.cost.toFixed(1) + ")");
+        if (narrEl) narrEl.textContent +=
+          " Detour found — " + newRoute.edges.length + " blocks remaining. Truck stays parked.";
+        return;
+      }
+      dbg("REPLAN", car.id + " no detour available around parked truck · continuing on banned edge");
+    }
     car.state = "enroute_dropoff";
     return;
   }
-  const newRoute = dijkstra(car.nodeId, dst, car._banEdge);
-  if (newRoute) {
-    claimRoute(car, newRoute);
-    setRoute(car, newRoute);
+
+  if (kind === "jaywalker") {
+    if (o) o.active = false;
     car.state = "enroute_dropoff";
-    dbg("REPLAN", car.id + " rerouted around banned edge " + car._banEdge +
-      " · " + newRoute.edges.length + " blocks to " + (ix.dest ? ix.dest.name : "destination") +
-      " (cost " + newRoute.cost.toFixed(1) + ")");
-    const narrEl = document.getElementById("ix-narration");
-    narrEl.textContent +=
-      " Detour found — " + newRoute.edges.length + " block" +
-      (newRoute.edges.length === 1 ? "" : "s") + " remaining. Resuming.";
-  } else {
-    dbg("REPLAN", car.id + " no detour available · continuing on banned edge");
+    const remaining = car.route ? (car.route.edges.length - car.routeIndex) : 0;
+    dbg("REPLAN", car.id + " jaywalker cleared the road · resuming on same route (" + remaining + " blocks remaining)");
+    if (narrEl) narrEl.textContent += " Jaywalker cleared the road — resuming on same route.";
+    return;
+  }
+
+  if (kind === "manual-driven car") {
+    car._slowedTicks = 30;
     car.state = "enroute_dropoff";
+    if (o) o.active = false;
+    dbg("REPLAN", car.id + " safe following distance established · resuming at 40% speed for ~30 ticks");
+    if (narrEl) narrEl.textContent += " Safe following distance established — resuming at reduced speed.";
+    return;
+  }
+
+  car.state = "enroute_dropoff";
+}
+
+function updateObstacles() {
+  for (const o of ix.obstacles) {
+    if (!o.active || o.kind !== "jaywalker") continue;
+    o.crossT = Math.min(1, (o.crossT || 0) + 1 / 25);
+    o.x = o.crossStart.x + (o.crossEnd.x - o.crossStart.x) * o.crossT;
+    o.y = o.crossStart.y + (o.crossEnd.y - o.crossStart.y) * o.crossT;
   }
 }
 
@@ -1203,13 +1275,27 @@ function drawCars() {
 function drawObstacles() {
   for (const o of ix.obstacles) {
     if (!o.active) continue;
-    ctx.fillStyle = COLORS.obstacle;
-    ctx.beginPath();
-    ctx.arc(o.x, o.y, 7, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
+    if (o.kind === "jaywalker") {
+      ctx.fillStyle = "#ef4444";
+      ctx.beginPath();
+      ctx.arc(o.x, o.y, 4.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    } else if (o.kind === "parked truck") {
+      ctx.fillStyle = "#fb923c";
+      ctx.fillRect(o.x - 8, o.y - 5, 16, 10);
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(o.x - 8, o.y - 5, 16, 10);
+    } else {
+      ctx.fillStyle = "#9ca3af";
+      ctx.fillRect(o.x - 6, o.y - 4, 12, 8);
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 1;
+      ctx.strokeRect(o.x - 6, o.y - 4, 12, 8);
+    }
     ctx.fillStyle = "#fff";
     ctx.font = "10px -apple-system, sans-serif";
     ctx.textAlign = "left";
@@ -1509,7 +1595,7 @@ function drawDynamicFPV(cam, focalCar) {
   items.sort((a, b) => b.depth - a.depth);
   for (const item of items) {
     if (item.type === "car") drawCarFPV(item.car, item.v);
-    else drawJaywalkerFPV(item.obstacle, item.v);
+    else drawObstacleFPV(item.obstacle, item.v);
   }
 }
 
@@ -1536,27 +1622,93 @@ function drawCarFPV(c, v) {
   }
 }
 
-function drawJaywalkerFPV(o, v) {
+function drawObstacleFPV(o, v) {
   const p = projectCam(v);
-  const h = Math.min(240, 900 / Math.max(v.fwd, 1));
+  if (o.kind === "jaywalker") drawJaywalkerFigure(o, p, v.fwd);
+  else if (o.kind === "parked truck") drawParkedTruckFPV(p, v.fwd);
+  else drawManualCarFPV(p, v.fwd);
+}
+
+function drawJaywalkerFigure(o, p, depth) {
+  const h = Math.min(240, 900 / Math.max(depth, 1));
   fpvCtx.strokeStyle = "#ef4444";
   fpvCtx.lineWidth = Math.max(1.5, h / 50);
+  // walking gait: legs alternate based on crossT
+  const phase = (o.crossT != null) ? (o.crossT * Math.PI * 6) : 0;
+  const legSwing = Math.sin(phase) * 0.10;
+  const armSwing = -Math.sin(phase) * 0.06;
   fpvCtx.beginPath();
+  // head
   fpvCtx.arc(p.x, p.y - h, h * 0.13, 0, Math.PI * 2);
+  // body
   fpvCtx.moveTo(p.x, p.y - h * 0.87);
   fpvCtx.lineTo(p.x, p.y - h * 0.45);
-  fpvCtx.moveTo(p.x - h * 0.22, p.y - h * 0.65);
-  fpvCtx.lineTo(p.x + h * 0.22, p.y - h * 0.65);
+  // arms (slight swing, opposite sides)
+  fpvCtx.moveTo(p.x - h * 0.22, p.y - h * (0.65 + armSwing));
+  fpvCtx.lineTo(p.x, p.y - h * 0.72);
+  fpvCtx.lineTo(p.x + h * 0.22, p.y - h * (0.65 - armSwing));
+  // legs (alternating step)
   fpvCtx.moveTo(p.x, p.y - h * 0.45);
-  fpvCtx.lineTo(p.x - h * 0.17, p.y);
+  fpvCtx.lineTo(p.x - h * 0.17 + h * legSwing, p.y);
   fpvCtx.moveTo(p.x, p.y - h * 0.45);
-  fpvCtx.lineTo(p.x + h * 0.17, p.y);
+  fpvCtx.lineTo(p.x + h * 0.17 - h * legSwing, p.y);
   fpvCtx.stroke();
   fpvCtx.fillStyle = "#ef4444";
   fpvCtx.font = "bold 11px -apple-system, sans-serif";
   fpvCtx.textAlign = "center";
   fpvCtx.textBaseline = "alphabetic";
-  fpvCtx.fillText(o.kind.toUpperCase(), p.x, p.y - h - 10);
+  fpvCtx.fillText("JAYWALKER", p.x, p.y - h - 10);
+}
+
+function drawParkedTruckFPV(p, depth) {
+  const w = Math.min(190, 760 / Math.max(depth, 1));
+  const h = w * 0.55;
+  // shadow
+  fpvCtx.fillStyle = "rgba(0,0,0,0.35)";
+  fpvCtx.fillRect(p.x - w / 2 + 3, p.y - h + 4, w, h);
+  // body
+  fpvCtx.fillStyle = "#fb923c";
+  fpvCtx.fillRect(p.x - w / 2, p.y - h, w, h);
+  fpvCtx.strokeStyle = "rgba(0,0,0,0.7)";
+  fpvCtx.lineWidth = 1.5;
+  fpvCtx.strokeRect(p.x - w / 2, p.y - h, w, h);
+  // cab divider
+  fpvCtx.strokeStyle = "rgba(0,0,0,0.5)";
+  fpvCtx.lineWidth = 1;
+  fpvCtx.beginPath();
+  fpvCtx.moveTo(p.x - w * 0.15, p.y - h);
+  fpvCtx.lineTo(p.x - w * 0.15, p.y);
+  fpvCtx.stroke();
+  // windshield
+  fpvCtx.fillStyle = "rgba(60,70,90,0.7)";
+  fpvCtx.fillRect(p.x - w * 0.42, p.y - h * 0.85, w * 0.22, h * 0.45);
+  fpvCtx.fillStyle = "#ef4444";
+  fpvCtx.font = "bold 11px -apple-system, sans-serif";
+  fpvCtx.textAlign = "center";
+  fpvCtx.textBaseline = "alphabetic";
+  fpvCtx.fillText("PARKED TRUCK", p.x, p.y - h - 8);
+}
+
+function drawManualCarFPV(p, depth) {
+  const w = Math.min(130, 520 / Math.max(depth, 1));
+  const h = w * 0.55;
+  // body
+  fpvCtx.fillStyle = "#9ca3af";
+  fpvCtx.fillRect(p.x - w / 2, p.y - h, w, h);
+  fpvCtx.strokeStyle = "rgba(0,0,0,0.7)";
+  fpvCtx.lineWidth = 1.5;
+  fpvCtx.strokeRect(p.x - w / 2, p.y - h, w, h);
+  // windshield
+  fpvCtx.fillStyle = "rgba(60,70,90,0.75)";
+  fpvCtx.fillRect(p.x - w * 0.32, p.y - h * 0.85, w * 0.64, h * 0.4);
+  // bumper / tail lights
+  fpvCtx.fillStyle = "#ef4444";
+  fpvCtx.fillRect(p.x - w * 0.45, p.y - h * 0.18, w * 0.12, h * 0.12);
+  fpvCtx.fillRect(p.x + w * 0.33, p.y - h * 0.18, w * 0.12, h * 0.12);
+  fpvCtx.font = "bold 11px -apple-system, sans-serif";
+  fpvCtx.textAlign = "center";
+  fpvCtx.textBaseline = "alphabetic";
+  fpvCtx.fillText("MANUAL-DRIVEN", p.x, p.y - h - 8);
 }
 
 function drawFPVHUD(car) {
@@ -1629,6 +1781,7 @@ function tick() {
     stepCars(speedMult);
   } else if ((mode === "interactive" || mode === "pov") && ix.drivingCar) {
     stepCars(speedMult, ix.drivingCar);
+    updateObstacles();
   }
   updateHUD();
   render();
@@ -1656,6 +1809,9 @@ document.getElementById("reset").addEventListener("click", () => {
     c._segments = null;
     c._activeSeg = null;
     c._toDropoffRoute = null;
+    c._slowedTicks = 0;
+    c._obstacleKind = null;
+    c._obstacle = null;
     c.interactive = false;
     c.sensorActive = false;
   }
