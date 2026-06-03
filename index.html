@@ -1,0 +1,1196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PubTrans — Autonomous Metro Sim</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f1014; color: #e0e0e0; height: 100vh; overflow: hidden; }
+.app { display: grid; grid-template-columns: 1fr 380px; height: 100vh; }
+.canvas-wrap { position: relative; background: #0f1014; display: flex; align-items: center; justify-content: center; padding: 24px; }
+#map { background: #1f2024; border-radius: 6px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); display: block; max-width: 100%; max-height: 100%; }
+#map.interactive { cursor: crosshair; }
+.sidebar { background: #16171c; border-left: 1px solid #2a2c33; overflow-y: auto; padding: 18px; }
+.sidebar h1 { font-size: 22px; font-weight: 600; margin-bottom: 2px; letter-spacing: -0.3px; }
+.sub { font-size: 12px; color: #888; margin-bottom: 18px; }
+.mode-toggle { display: flex; gap: 6px; margin-bottom: 16px; }
+.mode-toggle button { flex: 1; padding: 8px 12px; background: #2a2c33; border: 1px solid #3a3d44; color: #ccc; border-radius: 4px; cursor: pointer; font-size: 13px; transition: all 0.15s; }
+.mode-toggle button.active { background: #14b8a6; color: #0f1014; border-color: #14b8a6; font-weight: 600; }
+section { margin-bottom: 18px; padding-bottom: 14px; border-bottom: 1px solid #25272d; }
+section:last-child { border-bottom: none; }
+section h2, section h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 1.4px; color: #888; margin-bottom: 10px; font-weight: 600; }
+.row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0; font-size: 13px; }
+.row label { color: #999; font-size: 12px; min-width: 56px; }
+.row input[type=range] { flex: 1; height: 4px; }
+button { padding: 6px 12px; background: #2a2c33; border: 1px solid #3a3d44; color: #ddd; border-radius: 4px; cursor: pointer; font-size: 12px; transition: background 0.1s; }
+button:hover:not(:disabled) { background: #3a3d44; }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+button.primary { background: #14b8a6; color: #0f1014; border-color: #14b8a6; font-weight: 600; }
+button.primary:hover:not(:disabled) { background: #0d9488; }
+input[type=password], input[type=text] { width: 100%; padding: 7px 9px; background: #1f2024; border: 1px solid #3a3d44; color: #ddd; border-radius: 4px; font-size: 12px; font-family: inherit; }
+input[type=password]:focus, input[type=text]:focus { outline: none; border-color: #14b8a6; }
+.hud .row span:last-child { font-variant-numeric: tabular-nums; color: #fff; font-weight: 500; }
+.legend .leg { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; }
+.sw { width: 14px; height: 14px; border-radius: 3px; display: inline-block; flex-shrink: 0; }
+.hint { font-size: 12px; color: #888; line-height: 1.5; margin-bottom: 8px; }
+.hint.small { font-size: 11px; color: #666; margin-top: 6px; }
+.route-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; margin: 4px 0; background: #1f2024; border-radius: 4px; font-size: 12px; }
+.route-row.chosen { background: rgba(34,197,94,0.12); border: 1px solid rgba(34,197,94,0.4); }
+.route-sw { width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0; }
+.route-meta { color: #999; font-variant-numeric: tabular-nums; margin-left: auto; font-size: 11px; }
+.narration { margin-top: 12px; padding: 12px; background: #1f2024; border-radius: 4px; font-size: 12px; line-height: 1.55; color: #ddd; white-space: pre-wrap; }
+.narration.placeholder { color: #666; font-style: italic; }
+.field { display: block; font-size: 11px; color: #888; margin-bottom: 4px; }
+.btn-row { display: flex; gap: 6px; margin-top: 10px; }
+.btn-row button { flex: 1; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="canvas-wrap"><canvas id="map" width="780" height="780"></canvas></div>
+  <aside class="sidebar">
+    <h1>PubTrans</h1>
+    <p class="sub">Autonomous metro · agent-dispatched fleet</p>
+
+    <div class="mode-toggle">
+      <button id="mode-auto" class="active">Auto</button>
+      <button id="mode-interactive">Interactive</button>
+    </div>
+
+    <section id="auto-controls">
+      <h3>Controls</h3>
+      <div class="row"><label>Speed</label><input type="range" id="speed" min="1" max="20" value="5"><span id="speed-val" style="min-width:32px;text-align:right">5×</span></div>
+      <div class="btn-row"><button id="pause">Pause</button><button id="reset">Reset day</button></div>
+    </section>
+
+    <section class="hud">
+      <h3>Live state</h3>
+      <div class="row"><span>Time</span><span id="clock">06:30</span></div>
+      <div class="row"><span>Population</span><span id="population">100</span></div>
+      <div class="row"><span>Active rides</span><span id="active-rides">0</span></div>
+      <div class="row"><span>Queued</span><span id="queued-rides">0</span></div>
+      <div class="row"><span>Completed</span><span id="completed-rides">0</span></div>
+      <div class="row"><span>Pooled riders</span><span id="pooled-rides">0</span></div>
+      <div class="row"><span>Avg trip (min)</span><span id="avg-trip">—</span></div>
+      <div class="row"><span>Gridlock</span><span id="gridlock">0.00</span></div>
+    </section>
+
+    <section id="interactive-panel" hidden>
+      <h2>Interactive plan</h2>
+      <p class="hint" id="ix-hint">Click on a <b>building</b> to set the <b>source</b>.</p>
+      <div id="ix-routes"></div>
+      <div id="ix-narration" class="narration placeholder" hidden>—</div>
+      <div class="btn-row"><button id="ix-plan" class="primary" disabled>Plan</button><button id="ix-drive" disabled>Drive</button><button id="ix-reset">Clear</button></div>
+    </section>
+
+    <section class="legend">
+      <h3>Legend</h3>
+      <div class="leg"><span class="sw" style="background:#5b9bd5"></span>Employer</div>
+      <div class="leg"><span class="sw" style="background:#70ad47"></span>Grocery</div>
+      <div class="leg"><span class="sw" style="background:#ffc000"></span>School</div>
+      <div class="leg"><span class="sw" style="background:#c00000"></span>Train station</div>
+      <div class="leg"><span class="sw" style="background:#9a9a9a"></span>Residential</div>
+      <div class="leg"><span class="sw" style="background:#14b8a6"></span>Sedan (cap 4)</div>
+      <div class="leg"><span class="sw" style="background:#f97316"></span>Shuttle (cap 8)</div>
+      <div class="leg"><span class="sw" style="background:#ef4444"></span>Obstacle (interactive)</div>
+    </section>
+
+    <section>
+      <h3>Settings</h3>
+      <label class="field">Anthropic API key (interactive narration)</label>
+      <input type="password" id="api-key" placeholder="sk-ant-… (optional)">
+      <p class="hint small">Held in memory only. Without a key, templated narration is shown.</p>
+    </section>
+  </aside>
+</div>
+
+<script>
+"use strict";
+
+// ============================================================
+// Constants
+// ============================================================
+const GRID_N = 12;                // intersections per side
+const BLOCKS = GRID_N - 1;        // 11x11 blocks
+const CANVAS = 780;
+const PADDING = 36;
+const CELL = (CANVAS - PADDING * 2) / BLOCKS;
+const POPULATION = 100;
+const N_SEDANS = 14;
+const N_SHUTTLES = 6;
+const K_PATHS = 3;
+const SIM_MIN_PER_TICK = 0.5;     // 30 simulated seconds per tick
+const BASE_TICK_MS = 100;         // real-time tick interval
+const SENSOR_RANGE_PX = 60;
+const CONGESTION_W = 0.6;         // cost added per claim on an edge
+
+const COLORS = {
+  bg: "#1f2024",
+  street: "#2a2c33",
+  employer: "#5b9bd5",
+  grocery: "#70ad47",
+  school: "#ffc000",
+  station: "#c00000",
+  residential: "#9a9a9a",
+  sedan: "#14b8a6",
+  shuttle: "#f97316",
+  routePalette: ["#60a5fa", "#a78bfa", "#f472b6", "#fb923c"],
+  chosenRoute: "#22c55e",
+  obstacle: "#ef4444",
+  sensorCone: "rgba(34,197,94,0.22)",
+  pickupGlow: "#22c55e",
+  dropoffGlow: "#fb7185",
+};
+
+// ============================================================
+// City layout (handcrafted for balance)
+// ============================================================
+const BUILDINGS = [
+  { col: 1,  row: 1,  type: "employer",    name: "NorthCo"      },
+  { col: 9,  row: 1,  type: "employer",    name: "EastBank"     },
+  { col: 1,  row: 9,  type: "employer",    name: "SouthLabs"    },
+  { col: 9,  row: 9,  type: "employer",    name: "WestWorks"    },
+  { col: 4,  row: 2,  type: "school",      name: "Hillside"     },
+  { col: 6,  row: 8,  type: "school",      name: "Riverbend"    },
+  { col: 2,  row: 5,  type: "grocery",     name: "GreenMart"    },
+  { col: 8,  row: 5,  type: "grocery",     name: "CityFoods"    },
+  { col: 5,  row: 5,  type: "station",     name: "Central Stn"  },
+  { col: 0,  row: 3,  type: "residential", name: "Maple Row"    },
+  { col: 0,  row: 6,  type: "residential", name: "Cedar Block"  },
+  { col: 3,  row: 0,  type: "residential", name: "Birch Hgts"   },
+  { col: 7,  row: 0,  type: "residential", name: "Oak Hgts"     },
+  { col: 10, row: 3,  type: "residential", name: "Pine Row"     },
+  { col: 10, row: 7,  type: "residential", name: "Willow"       },
+  { col: 3,  row: 10, type: "residential", name: "Aspen"        },
+  { col: 7,  row: 10, type: "residential", name: "Elm Estates"  },
+];
+const buildingsByType = { employer: [], grocery: [], school: [], station: [], residential: [] };
+for (const b of BUILDINGS) {
+  b.color = COLORS[b.type];
+  b.accessId = nodeId(b.col, b.row);
+  buildingsByType[b.type].push(b);
+}
+
+// ============================================================
+// Street graph
+// ============================================================
+function nodeId(c, r) { return r * GRID_N + c; }
+function nodeColRow(id) { return [id % GRID_N, Math.floor(id / GRID_N)]; }
+function nodeXY(id) {
+  const [c, r] = nodeColRow(id);
+  return [PADDING + c * CELL, PADDING + r * CELL];
+}
+function edgeKey(a, b) { return a < b ? a + "-" + b : b + "-" + a; }
+
+const adj = {};            // nodeId -> [{ to, key }]
+const edges = {};          // edgeKey -> { a, b, claims: Set<carId> }
+function addEdge(a, b) {
+  const k = edgeKey(a, b);
+  if (edges[k]) return;
+  edges[k] = { a, b, claims: new Set() };
+  (adj[a] = adj[a] || []).push({ to: b, key: k });
+  (adj[b] = adj[b] || []).push({ to: a, key: k });
+}
+for (let r = 0; r < GRID_N; r++) {
+  for (let c = 0; c < GRID_N; c++) {
+    const id = nodeId(c, r);
+    if (c + 1 < GRID_N) addEdge(id, nodeId(c + 1, r));
+    if (r + 1 < GRID_N) addEdge(id, nodeId(c, r + 1));
+  }
+}
+const N_EDGES = Object.keys(edges).length;
+
+// ============================================================
+// Routing — Dijkstra with congestion-weighted edges
+// ============================================================
+function dijkstra(srcId, dstId, banEdge = null) {
+  if (srcId === dstId) return { nodes: [srcId], edges: [], cost: 0 };
+  const dist = new Map();
+  const prev = new Map();
+  dist.set(srcId, 0);
+  const pq = [[0, srcId]];
+  const visited = new Set();
+  while (pq.length) {
+    // simple selection of min — N is small enough
+    let minI = 0;
+    for (let i = 1; i < pq.length; i++) if (pq[i][0] < pq[minI][0]) minI = i;
+    const [d, u] = pq.splice(minI, 1)[0];
+    if (visited.has(u)) continue;
+    visited.add(u);
+    if (u === dstId) break;
+    const neighbors = adj[u] || [];
+    for (let i = 0; i < neighbors.length; i++) {
+      const { to, key } = neighbors[i];
+      if (key === banEdge) continue;
+      const w = 1 + CONGESTION_W * edges[key].claims.size;
+      const nd = d + w;
+      if (nd < (dist.has(to) ? dist.get(to) : Infinity)) {
+        dist.set(to, nd);
+        prev.set(to, { from: u, key });
+        pq.push([nd, to]);
+      }
+    }
+  }
+  if (!dist.has(dstId)) return null;
+  const nodes = [dstId];
+  const edgesUsed = [];
+  let cur = dstId;
+  while (prev.has(cur)) {
+    const { from, key } = prev.get(cur);
+    nodes.push(from);
+    edgesUsed.push(key);
+    cur = from;
+  }
+  nodes.reverse();
+  edgesUsed.reverse();
+  return { nodes, edges: edgesUsed, cost: dist.get(dstId) };
+}
+
+function sameNodes(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+// k shortest paths via edge-banning of primary's edges
+function kShortest(srcId, dstId, k = K_PATHS) {
+  const primary = dijkstra(srcId, dstId);
+  if (!primary) return [];
+  const results = [primary];
+  if (primary.edges.length === 0) return results;
+  const fracs = [0.5, 0.33, 0.66, 0.2, 0.8];
+  for (const f of fracs) {
+    if (results.length >= k) break;
+    const idx = Math.min(primary.edges.length - 1, Math.max(0, Math.floor(primary.edges.length * f)));
+    const ban = primary.edges[idx];
+    const alt = dijkstra(srcId, dstId, ban);
+    if (alt && !results.some(r => sameNodes(r.nodes, alt.nodes))) {
+      results.push(alt);
+    }
+  }
+  return results;
+}
+
+// ============================================================
+// Time
+// ============================================================
+let simMinute = 6 * 60 + 30;       // start 06:30
+let paused = false;
+function clockStr() {
+  const t = ((simMinute % 1440) + 1440) % 1440;
+  const h = Math.floor(t / 60);
+  const m = Math.floor(t % 60);
+  return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
+}
+
+// ============================================================
+// Population — 100 humans with schedules
+// ============================================================
+const humans = [];
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+function buildPopulation() {
+  const res = buildingsByType.residential;
+  const emp = buildingsByType.employer;
+  const sch = buildingsByType.school;
+  const grc = buildingsByType.grocery;
+  const stn = buildingsByType.station;
+  for (let i = 0; i < POPULATION; i++) {
+    const home = pick(res);
+    const roll = Math.random();
+    let profile;
+    if (roll < 0.60) profile = "worker";
+    else if (roll < 0.80) profile = "student";
+    else if (roll < 0.90) profile = "errand";
+    else profile = "commuter";
+    const jitter = () => (Math.random() - 0.5) * 30; // ±15 min
+    const h = { id: i, home, profile, schedule: [] };
+    if (profile === "worker") {
+      const work = pick(emp);
+      h.schedule.push({ minute: 8 * 60 + jitter(),  from: home, to: work });
+      h.schedule.push({ minute: 17 * 60 + jitter(), from: work, to: home });
+    } else if (profile === "student") {
+      const s = pick(sch);
+      h.schedule.push({ minute: 7 * 60 + 30 + jitter(), from: home, to: s });
+      h.schedule.push({ minute: 15 * 60 + jitter(),     from: s, to: home });
+    } else if (profile === "errand") {
+      const g = pick(grc);
+      h.schedule.push({ minute: 10 * 60 + jitter(), from: home, to: g });
+      h.schedule.push({ minute: 11 * 60 + jitter(), from: g, to: home });
+      if (Math.random() < 0.4) {
+        const g2 = pick(grc);
+        h.schedule.push({ minute: 14 * 60 + jitter(), from: home, to: g2 });
+        h.schedule.push({ minute: 15 * 60 + jitter(), from: g2, to: home });
+      }
+    } else {
+      const st = pick(stn);
+      h.schedule.push({ minute: 9 * 60 + jitter(),  from: home, to: st });
+      h.schedule.push({ minute: 18 * 60 + jitter(), from: st, to: home });
+    }
+    humans.push(h);
+  }
+}
+
+// ============================================================
+// Request queue + fleet
+// ============================================================
+const queue = [];
+const cars = [];
+const completedTrips = [];
+let nextReqId = 1;
+let pooledCount = 0;
+
+function makeCar(kind, id) {
+  const c = Math.floor(Math.random() * GRID_N);
+  const r = Math.floor(Math.random() * GRID_N);
+  const [x, y] = nodeXY(nodeId(c, r));
+  return {
+    id, kind,
+    capacity: kind === "sedan" ? 4 : 8,
+    nodeId: nodeId(c, r),
+    pos: { x, y },
+    heading: 0,
+    route: null,
+    routeIndex: 0,
+    progress: 0,
+    state: "idle",
+    riders: [],
+    pickupQueue: [],
+    color: kind === "sedan" ? COLORS.sedan : COLORS.shuttle,
+    interactive: false,
+    sensorActive: false,
+    _toDropoffRoute: null,
+    _segments: null,
+    _activeSeg: null,
+    _obstacleTimer: 0,
+    _banEdge: null,
+  };
+}
+function buildFleet() {
+  for (let i = 0; i < N_SEDANS; i++) cars.push(makeCar("sedan", "sed-" + (i + 1)));
+  for (let i = 0; i < N_SHUTTLES; i++) cars.push(makeCar("shuttle", "shu-" + (i + 1)));
+}
+
+function checkSchedules() {
+  for (const h of humans) {
+    for (const s of h.schedule) {
+      if (!s.requested && simMinute >= s.minute) {
+        s.requested = true;
+        queue.push({
+          id: nextReqId++,
+          human: h,
+          from: s.from,
+          to: s.to,
+          pickupId: s.from.accessId,
+          dropoffId: s.to.accessId,
+          requestedAt: simMinute,
+        });
+      }
+    }
+  }
+}
+
+// ============================================================
+// Dispatch — pools shuttles by destination, sedans for singles
+// ============================================================
+function findIdleCar(kind) {
+  for (const c of cars) if (c.state === "idle" && !c.interactive && c.kind === kind) return c;
+  return null;
+}
+function claimRoute(car, route) {
+  for (const k of route.edges) edges[k].claims.add(car.id);
+}
+function releaseRemaining(car) {
+  if (!car.route) return;
+  for (let i = car.routeIndex; i < car.route.edges.length; i++) {
+    edges[car.route.edges[i]].claims.delete(car.id);
+  }
+}
+
+function setRoute(car, route) {
+  car.route = route;
+  car.routeIndex = 0;
+  car.progress = 0;
+  if (route.nodes.length > 0) {
+    car.nodeId = route.nodes[0];
+    const [x, y] = nodeXY(car.nodeId);
+    car.pos.x = x; car.pos.y = y;
+  }
+}
+
+function dispatch() {
+  if (queue.length === 0) return;
+  const byDest = new Map();
+  for (const req of queue) {
+    if (!byDest.has(req.dropoffId)) byDest.set(req.dropoffId, []);
+    byDest.get(req.dropoffId).push(req);
+  }
+  const dispatched = new Set();
+  for (const [, reqs] of byDest) {
+    reqs.sort((a, b) => a.requestedAt - b.requestedAt);
+    const poolable = reqs.filter(r => simMinute - r.requestedAt < 30);
+    if (poolable.length >= 2) {
+      const shuttle = findIdleCar("shuttle");
+      if (shuttle) {
+        const group = poolable.slice(0, shuttle.capacity);
+        if (assignShuttle(shuttle, group)) {
+          for (const r of group) dispatched.add(r.id);
+          pooledCount += group.length;
+          continue;
+        }
+      }
+    }
+    for (const r of reqs) {
+      if (dispatched.has(r.id)) continue;
+      const car = findIdleCar("sedan") || findIdleCar("shuttle");
+      if (!car) break;
+      if (assignSingle(car, r)) dispatched.add(r.id);
+    }
+  }
+  for (let i = queue.length - 1; i >= 0; i--) {
+    if (dispatched.has(queue[i].id)) queue.splice(i, 1);
+  }
+}
+
+function assignSingle(car, req) {
+  const toPickup = dijkstra(car.nodeId, req.pickupId);
+  const toDropoff = dijkstra(req.pickupId, req.dropoffId);
+  if (!toPickup || !toDropoff) return false;
+  car.pickupQueue = [req];
+  claimRoute(car, toPickup);
+  claimRoute(car, toDropoff);
+  if (toPickup.edges.length === 0) {
+    // already at pickup
+    car.riders = car.pickupQueue.slice();
+    car.state = "enroute_dropoff";
+    car._toDropoffRoute = null;
+    setRoute(car, toDropoff);
+  } else {
+    car.state = "enroute_pickup";
+    car._toDropoffRoute = toDropoff;
+    setRoute(car, toPickup);
+  }
+  return true;
+}
+
+function assignShuttle(car, reqs) {
+  car.pickupQueue = reqs.slice();
+  let cursor = car.nodeId;
+  const segments = [];
+  for (const r of reqs) {
+    const seg = dijkstra(cursor, r.pickupId);
+    if (!seg) return false;
+    segments.push({ type: "pickup", req: r, route: seg });
+    cursor = r.pickupId;
+  }
+  const dropSeg = dijkstra(cursor, reqs[0].dropoffId);
+  if (!dropSeg) return false;
+  segments.push({ type: "dropoff_all", route: dropSeg });
+  for (const s of segments) claimRoute(car, s.route);
+  car._segments = segments;
+  // start first segment
+  const first = car._segments.shift();
+  car._activeSeg = first;
+  if (first.type === "pickup" && first.route.edges.length === 0) {
+    // already at first pickup
+    car.riders.push(first.req);
+    const next = car._segments.shift();
+    car._activeSeg = next;
+    if (next) {
+      car.state = (next.type === "dropoff_all") ? "enroute_dropoff" : "enroute_pickup";
+      setRoute(car, next.route);
+    }
+  } else {
+    car.state = "enroute_pickup";
+    setRoute(car, first.route);
+  }
+  return true;
+}
+
+// ============================================================
+// Movement
+// ============================================================
+function stepCars(speedMult, filterCar = null) {
+  const baseStep = 0.05 * speedMult;
+  for (const car of cars) {
+    if (filterCar && car !== filterCar) continue;
+    if (car.state === "idle") continue;
+    if (car.state === "obstacle_wait") {
+      car._obstacleTimer -= 1;
+      if (car._obstacleTimer <= 0) replanAroundObstacle(car);
+      continue;
+    }
+    if (!car.route || car.routeIndex >= car.route.edges.length) {
+      arriveAtRouteEnd(car);
+      continue;
+    }
+    car.progress += baseStep;
+    while (car.progress >= 1 && car.routeIndex < car.route.edges.length) {
+      car.progress -= 1;
+      const k = car.route.edges[car.routeIndex];
+      edges[k].claims.delete(car.id);
+      car.routeIndex++;
+      if (car.routeIndex < car.route.nodes.length) car.nodeId = car.route.nodes[car.routeIndex];
+      if (car.interactive && car.sensorActive) {
+        if (checkObstacle(car)) break;
+      }
+      if (car.routeIndex >= car.route.edges.length) {
+        arriveAtRouteEnd(car);
+        break;
+      }
+    }
+    updateCarXY(car);
+  }
+}
+
+function updateCarXY(car) {
+  if (!car.route || car.route.nodes.length === 0) return;
+  const a = car.route.nodes[car.routeIndex];
+  const b = car.route.nodes[car.routeIndex + 1];
+  if (b == null) {
+    const [x, y] = nodeXY(a);
+    car.pos.x = x; car.pos.y = y;
+    return;
+  }
+  const [ax, ay] = nodeXY(a);
+  const [bx, by] = nodeXY(b);
+  car.pos.x = ax + (bx - ax) * car.progress;
+  car.pos.y = ay + (by - ay) * car.progress;
+  car.heading = Math.atan2(by - ay, bx - ax);
+}
+
+function arriveAtRouteEnd(car) {
+  // Shuttle multi-segment flow
+  if (car._segments && car._activeSeg) {
+    if (car._activeSeg.type === "pickup") {
+      car.riders.push(car._activeSeg.req);
+    }
+    const next = car._segments.shift();
+    car._activeSeg = next;
+    if (!next) { finishTrip(car); return; }
+    car.state = (next.type === "dropoff_all") ? "enroute_dropoff" : "enroute_pickup";
+    setRoute(car, next.route);
+    return;
+  }
+  // Sedan flow
+  if (car.state === "enroute_pickup") {
+    car.riders = car.pickupQueue.slice();
+    car.state = "enroute_dropoff";
+    if (car._toDropoffRoute) {
+      setRoute(car, car._toDropoffRoute);
+      car._toDropoffRoute = null;
+    } else {
+      finishTrip(car);
+    }
+    return;
+  }
+  if (car.state === "enroute_dropoff") {
+    finishTrip(car);
+    return;
+  }
+}
+
+function finishTrip(car) {
+  for (const r of car.riders) {
+    completedTrips.push({ tripMin: simMinute - r.requestedAt });
+  }
+  if (completedTrips.length > 1000) completedTrips.splice(0, completedTrips.length - 1000);
+  car.riders = [];
+  car.pickupQueue = [];
+  car.state = "idle";
+  releaseRemaining(car);
+  car.route = null;
+  car._segments = null;
+  car._activeSeg = null;
+  car._toDropoffRoute = null;
+  if (car.interactive) {
+    car.interactive = false;
+    car.sensorActive = false;
+  }
+}
+
+// ============================================================
+// Interactive mode + scripted obstacles
+// ============================================================
+let mode = "auto";
+const ix = {
+  source: null,
+  dest: null,
+  routes: [],
+  chosen: null,
+  drivingCar: null,
+  obstacles: [],
+};
+
+function setMode(m) {
+  mode = m;
+  document.getElementById("mode-auto").classList.toggle("active", m === "auto");
+  document.getElementById("mode-interactive").classList.toggle("active", m === "interactive");
+  document.getElementById("interactive-panel").hidden = (m !== "interactive");
+  document.getElementById("auto-controls").hidden = (m !== "auto");
+  document.getElementById("map").classList.toggle("interactive", m === "interactive");
+  if (m === "interactive") {
+    paused = true;
+    document.getElementById("pause").textContent = "Pause";
+    ixReset();
+  } else {
+    paused = false;
+    document.getElementById("pause").textContent = "Pause";
+    ixReset();
+  }
+}
+
+function ixReset() {
+  if (ix.drivingCar) {
+    releaseRemaining(ix.drivingCar);
+    ix.drivingCar.state = "idle";
+    ix.drivingCar.route = null;
+    ix.drivingCar.riders = [];
+    ix.drivingCar.interactive = false;
+    ix.drivingCar.sensorActive = false;
+    ix.drivingCar._segments = null;
+    ix.drivingCar._activeSeg = null;
+  }
+  ix.source = null;
+  ix.dest = null;
+  ix.routes = [];
+  ix.chosen = null;
+  ix.drivingCar = null;
+  ix.obstacles = [];
+  document.getElementById("ix-hint").innerHTML = "Click on a <b>building</b> to set the <b>source</b>.";
+  document.getElementById("ix-plan").disabled = true;
+  document.getElementById("ix-drive").disabled = true;
+  document.getElementById("ix-narration").hidden = true;
+  document.getElementById("ix-routes").innerHTML = "";
+}
+
+function pickClosestBuilding(x, y) {
+  let best = null, bestDist = Infinity;
+  const half = (CELL - 8) / 2;
+  for (const b of BUILDINGS) {
+    const [bx, by] = nodeXY(nodeId(b.col, b.row));
+    const cx = bx + 4 + half, cy = by + 4 + half;
+    const d = (cx - x) ** 2 + (cy - y) ** 2;
+    if (d < bestDist) { bestDist = d; best = b; }
+  }
+  // require click to be reasonably close (within ~CELL pixels)
+  if (Math.sqrt(bestDist) > CELL) return null;
+  return best;
+}
+
+const canvas = document.getElementById("map");
+canvas.addEventListener("click", (e) => {
+  if (mode !== "interactive") return;
+  if (ix.drivingCar) return; // already driving
+  const rect = canvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+  const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+  const b = pickClosestBuilding(x, y);
+  if (!b) return;
+  if (!ix.source) {
+    ix.source = b;
+    document.getElementById("ix-hint").innerHTML =
+      "Source: <b>" + b.name + "</b>. Click a <b>destination</b>.";
+  } else if (!ix.dest && b !== ix.source) {
+    ix.dest = b;
+    document.getElementById("ix-hint").innerHTML =
+      "Source: <b>" + ix.source.name + "</b> → Destination: <b>" + b.name + "</b>. Click <b>Plan</b>.";
+    document.getElementById("ix-plan").disabled = false;
+  } else if (ix.dest) {
+    // reset and use new source
+    ix.source = b;
+    ix.dest = null;
+    ix.routes = [];
+    ix.chosen = null;
+    document.getElementById("ix-routes").innerHTML = "";
+    document.getElementById("ix-narration").hidden = true;
+    document.getElementById("ix-plan").disabled = true;
+    document.getElementById("ix-drive").disabled = true;
+    document.getElementById("ix-hint").innerHTML =
+      "Source: <b>" + b.name + "</b>. Click a <b>destination</b>.";
+  }
+});
+
+function countConflicts(route) {
+  let n = 0;
+  for (const k of route.edges) n += edges[k].claims.size;
+  return n;
+}
+
+function updateInteractivePanel() {
+  const routesEl = document.getElementById("ix-routes");
+  routesEl.innerHTML = "";
+  const labels = ["A", "B", "C", "D"];
+  for (let i = 0; i < ix.routes.length; i++) {
+    const r = ix.routes[i];
+    const conflicts = countConflicts(r);
+    const row = document.createElement("div");
+    row.className = "route-row" + (i === ix.chosen ? " chosen" : "");
+    const color = i === ix.chosen ? COLORS.chosenRoute : COLORS.routePalette[i % COLORS.routePalette.length];
+    row.innerHTML =
+      '<span class="route-sw" style="background:' + color + '"></span>' +
+      "<b>Route " + labels[i] + "</b>" +
+      '<span class="route-meta">' + r.edges.length + " blk · " + conflicts + " conflict · score " + r.cost.toFixed(1) + "</span>";
+    routesEl.appendChild(row);
+  }
+}
+
+document.getElementById("ix-plan").addEventListener("click", async () => {
+  if (!ix.source || !ix.dest) return;
+  const src = ix.source.accessId;
+  const dst = ix.dest.accessId;
+  ix.routes = kShortest(src, dst, K_PATHS);
+  if (ix.routes.length === 0) return;
+  let bestIdx = 0;
+  for (let i = 1; i < ix.routes.length; i++) {
+    if (ix.routes[i].cost < ix.routes[bestIdx].cost) bestIdx = i;
+  }
+  ix.chosen = bestIdx;
+  updateInteractivePanel();
+  document.getElementById("ix-drive").disabled = false;
+
+  const labels = ["A", "B", "C", "D"];
+  const decisionData = {
+    source: ix.source.name,
+    dest: ix.dest.name,
+    routes: ix.routes.map((r, i) => ({
+      label: labels[i],
+      length: r.edges.length,
+      conflicts: countConflicts(r),
+      score: Number(r.cost.toFixed(1)),
+    })),
+    chosen: labels[bestIdx],
+  };
+  const narrEl = document.getElementById("ix-narration");
+  narrEl.hidden = false;
+  narrEl.classList.add("placeholder");
+  narrEl.textContent = "Reasoning…";
+  const text = await narrateDecision(decisionData);
+  narrEl.classList.remove("placeholder");
+  narrEl.textContent = text;
+});
+
+document.getElementById("ix-drive").addEventListener("click", () => {
+  if (ix.chosen == null) return;
+  const route = ix.routes[ix.chosen];
+  // borrow an idle car (prefer sedan)
+  let car = findIdleCar("sedan") || findIdleCar("shuttle");
+  if (!car) {
+    // force-pick the first car
+    car = cars[0];
+    releaseRemaining(car);
+    car.state = "idle";
+    car.route = null;
+  }
+  car.nodeId = route.nodes[0];
+  const [x, y] = nodeXY(car.nodeId);
+  car.pos.x = x; car.pos.y = y;
+  claimRoute(car, route);
+  setRoute(car, route);
+  car.state = "enroute_dropoff";
+  car.interactive = true;
+  car.sensorActive = true;
+  car.riders = [{ human: { id: -1 }, requestedAt: simMinute, dropoffId: ix.dest.accessId }];
+  ix.drivingCar = car;
+  scheduleObstacles(route);
+  document.getElementById("ix-drive").disabled = true;
+});
+
+function scheduleObstacles(route) {
+  ix.obstacles = [];
+  const triggers = [0.33, 0.66];
+  const kinds = ["jaywalker", "parked truck", "manual-driven car"];
+  for (let i = 0; i < triggers.length; i++) {
+    if (route.edges.length < 4) break;
+    const idx = Math.min(route.edges.length - 1, Math.max(1, Math.floor(route.edges.length * triggers[i])));
+    const a = route.nodes[idx], b = route.nodes[idx + 1];
+    if (a == null || b == null) continue;
+    const [ax, ay] = nodeXY(a);
+    const [bx, by] = nodeXY(b);
+    ix.obstacles.push({
+      x: (ax + bx) / 2,
+      y: (ay + by) / 2,
+      kind: kinds[i % kinds.length],
+      triggerEdgeIdx: idx,
+      banEdge: route.edges[idx],
+      active: false,
+      handled: false,
+    });
+  }
+}
+
+function checkObstacle(car) {
+  for (const o of ix.obstacles) {
+    if (o.handled) continue;
+    if (car.routeIndex === o.triggerEdgeIdx) {
+      o.active = true;
+      o.handled = true;
+      car.state = "obstacle_wait";
+      car._obstacleTimer = 12;
+      car._banEdge = o.banEdge;
+      const narrEl = document.getElementById("ix-narration");
+      narrEl.classList.remove("placeholder");
+      narrEl.textContent =
+        "Sensor cone detected a " + o.kind + " on the next segment. Stopping. " +
+        "Computing a detour that avoids that edge…";
+      return true;
+    }
+  }
+  return false;
+}
+
+function replanAroundObstacle(car) {
+  releaseRemaining(car);
+  const dst = ix.dest ? ix.dest.accessId : null;
+  if (dst == null) {
+    car.state = "enroute_dropoff";
+    return;
+  }
+  const newRoute = dijkstra(car.nodeId, dst, car._banEdge);
+  if (newRoute) {
+    claimRoute(car, newRoute);
+    setRoute(car, newRoute);
+    car.state = "enroute_dropoff";
+    const narrEl = document.getElementById("ix-narration");
+    narrEl.textContent +=
+      " Detour found — " + newRoute.edges.length + " block" +
+      (newRoute.edges.length === 1 ? "" : "s") + " remaining. Resuming.";
+  } else {
+    car.state = "enroute_dropoff";
+  }
+}
+
+document.getElementById("ix-reset").addEventListener("click", () => ixReset());
+
+// ============================================================
+// LLM narration
+// ============================================================
+function templatedNarration(d) {
+  const lines = [];
+  lines.push("Request: " + d.source + " → " + d.dest + ".");
+  lines.push("Evaluated " + d.routes.length + " candidate route" + (d.routes.length === 1 ? "" : "s") + ".");
+  const chosen = d.routes.find(r => r.label === d.chosen);
+  const others = d.routes.filter(r => r.label !== d.chosen);
+  if (others.length) {
+    lines.push("Alternates: " + others.map(r =>
+      "Route " + r.label + " (" + r.length + " blocks, " + r.conflicts + " conflicting cars, score " + r.score + ")"
+    ).join("; ") + ".");
+  }
+  lines.push("Selected Route " + chosen.label + ": " + chosen.length + " blocks, " +
+    chosen.conflicts + " conflicting cars, score " + chosen.score + ".");
+  lines.push("Choice minimizes expected travel time while reducing edge-level overlap with already-dispatched cars (priority: safety, rider time, system gridlock).");
+  return lines.join(" ");
+}
+
+async function narrateDecision(d) {
+  const apiKey = document.getElementById("api-key").value.trim();
+  if (!apiKey) return templatedNarration(d);
+  const prompt =
+    "You are the dispatching agent for an autonomous transportation system in a small metro area.\n" +
+    "A rider requested a trip from \"" + d.source + "\" to \"" + d.dest + "\".\n" +
+    "You evaluated " + d.routes.length + " candidate routes:\n" +
+    d.routes.map(r =>
+      "- Route " + r.label + ": " + r.length + " blocks, " + r.conflicts +
+      " conflicting cars on those edges, total score " + r.score + " (lower is better)"
+    ).join("\n") + "\n" +
+    "You selected Route " + d.chosen + ".\n" +
+    "Explain your reasoning in 3-5 plain English sentences. Be specific about the numbers. " +
+    "The priority order is (1) safety, (2) shortest time for this rider, (3) avoiding system-wide gridlock.";
+  try {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 400,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+    if (!resp.ok) {
+      const errText = await resp.text();
+      return templatedNarration(d) + "\n\n(LLM call failed: " + resp.status + " — " + errText.slice(0, 120) + ")";
+    }
+    const data = await resp.json();
+    if (data && data.content && data.content[0] && data.content[0].text) {
+      return data.content[0].text.trim();
+    }
+    return templatedNarration(d);
+  } catch (e) {
+    return templatedNarration(d) + "\n\n(LLM call failed: " + e.message + ")";
+  }
+}
+
+// ============================================================
+// Rendering
+// ============================================================
+const ctx = canvas.getContext("2d");
+
+function render() {
+  ctx.fillStyle = COLORS.bg;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  drawStreets();
+  drawCongestion();
+  drawBuildings();
+  if (mode === "interactive") drawInteractiveOverlay();
+  drawCars();
+  if (mode === "interactive") drawObstacles();
+}
+
+function drawStreets() {
+  ctx.strokeStyle = COLORS.street;
+  ctx.lineWidth = 14;
+  ctx.lineCap = "round";
+  for (const k in edges) {
+    const e = edges[k];
+    const [ax, ay] = nodeXY(e.a);
+    const [bx, by] = nodeXY(e.b);
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+  }
+  // intersection dots
+  ctx.fillStyle = "#33363d";
+  for (let r = 0; r < GRID_N; r++) {
+    for (let c = 0; c < GRID_N; c++) {
+      const [x, y] = nodeXY(nodeId(c, r));
+      ctx.beginPath();
+      ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+function drawCongestion() {
+  ctx.lineWidth = 14;
+  ctx.lineCap = "round";
+  for (const k in edges) {
+    const e = edges[k];
+    if (e.claims.size === 0) continue;
+    const t = Math.min(1, e.claims.size / 4);
+    ctx.strokeStyle = "rgba(239, 68, 68, " + (0.08 + t * 0.32) + ")";
+    const [ax, ay] = nodeXY(e.a);
+    const [bx, by] = nodeXY(e.b);
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.stroke();
+  }
+}
+
+function drawBuildings() {
+  const BSIZE = CELL - 10;
+  for (const b of BUILDINGS) {
+    const [x, y] = nodeXY(nodeId(b.col, b.row));
+    const bx = x + 5, by = y + 5;
+    // shadow
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.fillRect(bx + 2, by + 3, BSIZE, BSIZE);
+    // building
+    ctx.fillStyle = b.color;
+    ctx.fillRect(bx, by, BSIZE, BSIZE);
+    // light border
+    ctx.strokeStyle = "rgba(255,255,255,0.10)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(bx + 0.5, by + 0.5, BSIZE - 1, BSIZE - 1);
+    // label
+    ctx.fillStyle = "#0f1014";
+    ctx.font = "bold 9px -apple-system, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(b.name, bx + BSIZE / 2, by + BSIZE / 2);
+  }
+}
+
+function drawCars() {
+  for (const car of cars) {
+    if (car.state === "idle") {
+      const [x, y] = nodeXY(car.nodeId);
+      ctx.globalAlpha = 0.30;
+      ctx.fillStyle = car.color;
+      ctx.beginPath();
+      ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      continue;
+    }
+    const x = car.pos.x, y = car.pos.y;
+    // body
+    const radius = car.kind === "sedan" ? 5.5 : 7.5;
+    ctx.fillStyle = car.color;
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,0.4)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // rider count
+    if (car.riders.length > 0) {
+      ctx.fillStyle = "#fff";
+      ctx.font = "bold 9px -apple-system, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(car.riders.length), x, y + 0.5);
+    }
+    // sensor cone (interactive car only)
+    if (car.interactive && car.sensorActive) {
+      ctx.fillStyle = COLORS.sensorCone;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      const spread = Math.PI / 5;
+      ctx.arc(x, y, SENSOR_RANGE_PX, car.heading - spread, car.heading + spread);
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+}
+
+function drawObstacles() {
+  for (const o of ix.obstacles) {
+    if (!o.active) continue;
+    ctx.fillStyle = COLORS.obstacle;
+    ctx.beginPath();
+    ctx.arc(o.x, o.y, 7, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = "#fff";
+    ctx.font = "10px -apple-system, sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText(o.kind, o.x + 12, o.y);
+  }
+}
+
+function drawInteractiveOverlay() {
+  for (let i = 0; i < ix.routes.length; i++) {
+    const r = ix.routes[i];
+    const isChosen = (i === ix.chosen);
+    ctx.strokeStyle = isChosen ? COLORS.chosenRoute : COLORS.routePalette[i % COLORS.routePalette.length];
+    ctx.lineWidth = isChosen ? 7 : 4;
+    ctx.globalAlpha = isChosen ? 0.95 : 0.55;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.beginPath();
+    for (let j = 0; j < r.nodes.length; j++) {
+      const [x, y] = nodeXY(r.nodes[j]);
+      if (j === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  if (ix.source) drawPin(ix.source.accessId, COLORS.pickupGlow, "S");
+  if (ix.dest) drawPin(ix.dest.accessId, COLORS.dropoffGlow, "D");
+}
+
+function drawPin(nid, color, letter) {
+  const [x, y] = nodeXY(nid);
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 12;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y, 10, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = "#0f1014";
+  ctx.font = "bold 11px -apple-system, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(letter, x, y);
+}
+
+// ============================================================
+// HUD
+// ============================================================
+function updateHUD() {
+  document.getElementById("clock").textContent = clockStr();
+  let active = 0;
+  for (const c of cars) if (c.state !== "idle") active++;
+  document.getElementById("active-rides").textContent = active;
+  document.getElementById("queued-rides").textContent = queue.length;
+  document.getElementById("completed-rides").textContent = completedTrips.length;
+  document.getElementById("pooled-rides").textContent = pooledCount;
+  document.getElementById("population").textContent = humans.length;
+  if (completedTrips.length > 0) {
+    const recent = completedTrips.slice(-100);
+    const avg = recent.reduce((s, t) => s + t.tripMin, 0) / recent.length;
+    document.getElementById("avg-trip").textContent = avg.toFixed(1);
+  }
+  let totalClaims = 0;
+  for (const k in edges) totalClaims += edges[k].claims.size;
+  const gridlock = totalClaims / N_EDGES;
+  document.getElementById("gridlock").textContent = gridlock.toFixed(2);
+}
+
+// ============================================================
+// Main loop
+// ============================================================
+let speedMult = 5;
+let dispatchCounter = 0;
+function tick() {
+  if (mode === "auto" && !paused) {
+    simMinute += SIM_MIN_PER_TICK * speedMult;
+    if (simMinute >= 24 * 60) {
+      simMinute = 6 * 60 + 30;
+      for (const h of humans) for (const s of h.schedule) s.requested = false;
+    }
+    checkSchedules();
+    dispatchCounter++;
+    if (dispatchCounter >= 2) {
+      dispatchCounter = 0;
+      dispatch();
+    }
+    stepCars(speedMult);
+  } else if (mode === "interactive" && ix.drivingCar) {
+    stepCars(speedMult, ix.drivingCar);
+  }
+  updateHUD();
+  render();
+}
+
+document.getElementById("speed").addEventListener("input", (e) => {
+  speedMult = +e.target.value;
+  document.getElementById("speed-val").textContent = speedMult + "×";
+});
+document.getElementById("pause").addEventListener("click", () => {
+  paused = !paused;
+  document.getElementById("pause").textContent = paused ? "Resume" : "Pause";
+});
+document.getElementById("reset").addEventListener("click", () => {
+  simMinute = 6 * 60 + 30;
+  queue.length = 0;
+  completedTrips.length = 0;
+  pooledCount = 0;
+  for (const c of cars) {
+    c.state = "idle";
+    c.route = null;
+    c.riders = [];
+    c.pickupQueue = [];
+    c._segments = null;
+    c._activeSeg = null;
+    c._toDropoffRoute = null;
+    c.interactive = false;
+    c.sensorActive = false;
+  }
+  for (const k in edges) edges[k].claims.clear();
+  for (const h of humans) for (const s of h.schedule) s.requested = false;
+});
+document.getElementById("mode-auto").addEventListener("click", () => setMode("auto"));
+document.getElementById("mode-interactive").addEventListener("click", () => setMode("interactive"));
+
+// ============================================================
+// Init
+// ============================================================
+buildPopulation();
+buildFleet();
+setMode("auto");
+setInterval(tick, BASE_TICK_MS);
+</script>
+</body>
+</html>
