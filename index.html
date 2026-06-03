@@ -1678,10 +1678,14 @@ function drawRoadsFPV(cam) {
 
 function drawBuildingsFPV(cam) {
   const items = [];
+  // Inset the building face inside the block so it does not overlap the
+  // road. Road has half-width FPV_ROAD_HALF on each side of the centerline,
+  // so the building face must be at least that far from the intersection.
+  const inset = FPV_ROAD_HALF + 1;
+  const bSize = CELL - inset * 2;
   for (const b of BUILDINGS) {
     const [x, y] = nodeXY(nodeId(b.col, b.row));
-    const bSize = CELL - 10;
-    const bx = x + 5, by = y + 5;
+    const bx = x + inset, by = y + inset;
     const cx = bx + bSize / 2, cy = by + bSize / 2;
     const dist = Math.hypot(cx - cam.x, cy - cam.y);
     if (dist > FPV_FAR + CELL * 1.5) continue;
@@ -1746,7 +1750,7 @@ function drawDynamicFPV(cam, focalCar) {
 
 function drawCarFPV(c, v, cam) {
   const ground = projectCam(v);
-  const w = Math.min(190, 800 / Math.max(v.fwd, 1));
+  const w = Math.min(350, 2400 / Math.max(v.fwd, 1));
   const carH = w * 0.65;
   const bodyTop = ground.y - carH;
   const bodyL = ground.x - w / 2;
