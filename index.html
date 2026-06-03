@@ -117,8 +117,8 @@ const CANVAS = 780;
 const PADDING = 36;
 const CELL = (CANVAS - PADDING * 2) / BLOCKS;
 const POPULATION = 100;
-const N_SEDANS = 14;
-const N_SHUTTLES = 6;
+const N_SEDANS = 28;
+const N_SHUTTLES = 14;
 const K_PATHS = 3;
 const SIM_MIN_PER_TICK = 0.5;     // 30 simulated seconds per tick
 const BASE_TICK_MS = 100;         // real-time tick interval
@@ -385,7 +385,7 @@ function buildPopulation() {
     else if (roll < 0.80) profile = "student";
     else if (roll < 0.90) profile = "errand";
     else profile = "commuter";
-    const jitter = () => (Math.random() - 0.5) * 30; // ±15 min
+    const jitter = () => (Math.random() - 0.5) * 60; // ±30 min, spreads request peaks
     const h = { id: i, home, profile, schedule: [] };
     if (profile === "worker") {
       const work = pick(emp);
@@ -1253,7 +1253,6 @@ function updateHUD() {
 // Main loop
 // ============================================================
 let speedMult = 5;
-let dispatchCounter = 0;
 function tick() {
   if (mode === "auto" && !paused) {
     simMinute += SIM_MIN_PER_TICK * speedMult;
@@ -1262,11 +1261,7 @@ function tick() {
       for (const h of humans) for (const s of h.schedule) s.requested = false;
     }
     checkSchedules();
-    dispatchCounter++;
-    if (dispatchCounter >= 2) {
-      dispatchCounter = 0;
-      dispatch();
-    }
+    dispatch();
     stepCars(speedMult);
   } else if (mode === "interactive" && ix.drivingCar) {
     stepCars(speedMult, ix.drivingCar);
