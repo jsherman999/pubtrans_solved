@@ -1,6 +1,10 @@
 # pubtrans_solved
 
-A 2D simulation of a small metro area served by an LLM/agent-controlled fleet of autonomous vehicles (sedans + shuttles). Single-file HTML + Canvas + vanilla JS — no build step, no package manager, no dependencies.
+A 2D simulation of a small metro area served by an LLM/agent-controlled fleet of autonomous vehicles (sedans + shuttles). 
+
+Goal: Demonstrate how autonomous driving/routing algorithms can & will work. Note this runs all in browser, actual systems will be server based and scale to the size of major metros.
+
+Single-file HTML + Canvas + vanilla JS. no build step, package manager, dependencies.
 
 ## Install & run
 
