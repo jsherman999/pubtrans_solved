@@ -6,6 +6,14 @@ Goal: Demonstrate how autonomous driving/routing algorithms can & will work. Not
 
 Single-file HTML + Canvas + vanilla JS. no build step, package manager, dependencies.
 
+## View it live
+
+Once GitHub Pages is enabled for this repo, the app runs in the browser — no install:
+
+**https://jsherman999.github.io/pubtrans_solved/**
+
+(The core simulation runs entirely client-side. The optional LLM narration needs an Anthropic API key pasted into the Settings panel — see [Optional: LLM narration](#optional-llm-narration).)
+
 ## Screenshots
 
 Auto mode in flight, with the debug window open streaming dispatch, pickup, drop-off, traffic, and obstacle events. Each car is an oval aligned with its travel direction — the white number at the leading edge is the car number (matches the `sed-N` / `shu-N` ids in the debug stream), the black number behind it is the current passenger count. Two parked trucks are visible on the curbs:
