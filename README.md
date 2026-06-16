@@ -16,17 +16,13 @@ Once GitHub Pages is enabled for this repo, the app runs in the browser — no i
 
 ## Screenshots
 
-Auto mode in flight, with the debug window open streaming dispatch, pickup, drop-off, traffic, and obstacle events. Each car is an oval aligned with its travel direction — the white number at the leading edge is the car number (matches the `sed-N` / `shu-N` ids in the debug stream), the black number behind it is the current passenger count. Two parked trucks are visible on the curbs:
+**Auto mode.** A simulated day running at 1×. The top-down grid shows the city — colored blocks are employers, schools, grocery stores, the train station, and residential clusters (see the horizontal legend under the grid) — with sedans (teal) and shuttles (orange) servicing demand. Amber **blinking badges sit on the buildings where people are waiting**, showing how many riders are queued at each spot. One car is auto-**featured**: `sed-2` is highlighted with its yellow view cone on the grid, and its first-person view streams live in the **Driver POV** cockpit (`enroute dropoff · 1/4 aboard`). The **debug stream** docked beneath the grid logs every dispatch, pickup, drop-off, traffic, and obstacle decision in real time. The right column carries Live state, the Driver POV cockpit, **Fleet & demand** steppers (live ±population / ±sedans / ±shuttles), and the Settings key field (here a valid key is detected — `✓ key set · 108 chars`).
 
-![Auto mode with debug window](docs/auto-mode-with-debug.png)
+![Auto mode — grid, waiting-rider badges, featured-car POV, and live debug stream](docs/auto-mode.jpeg)
 
-Spectate — clicked shuttle `shu-4` on the grid and the FPV opened alongside a mini-map; sim continued at 1×. The HUD reads `EN ROUTE → DROPOFF @ Riverbend` and a `MANUAL-DRIVEN` obstacle (a non-fleet car) is sitting in the lane ahead. Sidebar's Spectating panel shows the focal car, its state, and rider count:
+**Interactive mode with LLM narration.** A source and destination were picked on the map, and the dispatcher evaluated three candidate routes (**Route A / B / C**, each with block count, conflicting cars, and a score). With an Anthropic API key entered, the **LLM narration** window at the bottom of the sidebar fills with Claude's plain-English explanation of *why* the chosen route wins — weighing rider time against system-wide congestion. The Driver POV cockpit shows the trip from inside the car.
 
-![Spectating shu-4 with a manual-driven car ahead](docs/spectate-shuttle-fpv.png)
-
-Driver POV mode mid-trip — three candidate routes drawn on the mini-map (Route A highlighted green), Claude Sonnet 4.6 narration in the sidebar explaining the tiebreaker that selected Route A despite a three-way tie on the headline metrics, and the FPV showing the trip in progress with `EN ROUTE → DROPOFF @ Pine Row`:
-
-![Driver POV with LLM narration](docs/driver-pov-narration.png)
+![Interactive mode — candidate routes with Claude's LLM narration of the dispatch decision](docs/interactive-narration.jpeg)
 
 ## Install & run
 
@@ -48,7 +44,7 @@ Tested in current Chrome, Safari, Firefox, and Edge. The whole app is in `index.
 
 ### Optional: LLM narration
 
-In Interactive and Driver POV modes the app can call **Claude Sonnet 4.6** to narrate the dispatcher's reasoning in plain English. Paste an Anthropic API key into the **Settings** panel in the sidebar; the key is held in memory only and a page refresh clears it. Without a key, a templated explanation is shown. The call goes directly from the browser to `api.anthropic.com` using the `anthropic-dangerous-direct-browser-access` header — no proxy server needed.
+In Interactive and Driver POV modes the app can call **Claude Sonnet 4.6** to narrate the dispatcher's reasoning in plain English. Paste an Anthropic API key into the **Settings** panel in the sidebar; the key is held in memory only and a page refresh clears it. A status line under the field confirms the key parsed (`✓ key set · N chars`). With a key, the reasoning streams into the **LLM narration** window at the bottom of the sidebar; without one, that window stays blank. The call goes directly from the browser to `api.anthropic.com` using the `anthropic-dangerous-direct-browser-access` header — no proxy server needed.
 
 ## What the simulation does
 
