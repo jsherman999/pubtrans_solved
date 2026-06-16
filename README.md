@@ -44,7 +44,7 @@ Tested in current Chrome, Safari, Firefox, and Edge. The whole app is in `index.
 
 ### Optional: LLM narration
 
-In Interactive and Driver POV modes the app can call **Claude Sonnet 4.6** to narrate the dispatcher's reasoning in plain English. Paste an Anthropic API key into the **Settings** panel in the sidebar; the key is held in memory only and a page refresh clears it. A status line under the field confirms the key parsed (`✓ key set · N chars`). With a key, the reasoning streams into the **LLM narration** window at the bottom of the sidebar; without one, that window stays blank. The call goes directly from the browser to `api.anthropic.com` using the `anthropic-dangerous-direct-browser-access` header — no proxy server needed.
+In Interactive mode the app can call **Claude Sonnet 4.6** to narrate the dispatcher's reasoning in plain English. Paste an Anthropic API key into the **Settings** panel in the sidebar; the key is held in memory only and a page refresh clears it. A status line under the field confirms the key parsed (`✓ key set · N chars`). With a key, the reasoning streams into the **LLM narration** window at the bottom of the sidebar; without one, that window stays blank. The call goes directly from the browser to `api.anthropic.com` using the `anthropic-dangerous-direct-browser-access` header — no proxy server needed.
 
 ## What the simulation does
 
@@ -54,13 +54,15 @@ In Interactive and Driver POV modes the app can call **Claude Sonnet 4.6** to na
 - **Routing**: Dijkstra on the street graph with edge weights = `1 + congestion_penalty × claims`, so cars naturally spread across alternates
 - **Traffic infrastructure** (randomized at init time): 2 one-way streets (Dijkstra respects direction), 4 stoplights with cycling phases, 4 stop signs
 
-## Three modes
+## Two modes
 
-**Auto** — a sped-up simulated day. The city hums with cars satisfying schedule-driven demand. HUD shows active rides, completed rides, average trip time, and a live gridlock score. Random obstacles (jaywalkers, parked trucks, manual-driven cars) spawn on the grid and every car senses and reacts with kind-specific behaviors: jaywalker brake-and-wait, truck detour, manual-driven car slow-follow. Scheduled surge events (school day starts/ends, train arrivals/departures) inject bursts of requests with a banner announcement in both the top-down and FPV views. **Click any active car** on the grid to spectate it — a wireframe POV opens for that car alongside a mini-map and the sim continues at 1×. Click another car to switch; **Exit POV** returns to full-map view.
+**Auto** — a sped-up simulated day. The city hums with cars satisfying schedule-driven demand. HUD shows active rides, completed rides, average trip time, and a live gridlock score. Random obstacles (jaywalkers, parked trucks, manual-driven cars) spawn on the grid and every car senses and reacts with kind-specific behaviors: jaywalker brake-and-wait, truck detour, manual-driven car slow-follow. Scheduled surge events (school day starts/ends, train arrivals/departures) inject bursts of requests with a banner announcement in both the top-down and FPV views. **Click any active car** on the grid to ride along — its first-person view opens in the Driver POV cockpit and the sim continues at 1×. Click another car to switch; **Exit POV** returns to auto-featuring a busy car.
 
 **Interactive** — click a source then destination on the map. The agent's decision is walked through step-by-step: candidate routes (k-shortest with edge-banning to find alternates), per-route conflict analysis, chosen route, then a simulated trip with scripted obstacles demonstrating sensor avoidance and on-the-fly replan.
 
-**Driver POV** — same source/destination flow as Interactive, but during the drive the canvas splits into a small top-down mini-map (with the focal car highlighted and its view cone shown) and a wireframe first-person view from inside the car. Roads with lane stripes, building faces shaded by distance, other cars in the fleet at their real positions (right-lane biased with direction-aware head/taillights), scripted obstacles, stoplights, stop signs, and one-way arrows are all projected from the car's perspective. When the sensor cone trips, the FPV shows a red BRAKE overlay; the route then replans (for parked trucks) or continues after the jaywalker clears.
+## Driver POV cockpit
+
+The sidebar always shows a live wireframe first-person view from inside one car — the one you tapped to spectate, the interactive trip in progress, or (when nothing is selected) an auto-featured busy car, highlighted on the grid with its view cone. Roads with lane stripes, building faces shaded by distance, other cars in the fleet at their real positions (right-lane biased with direction-aware head/taillights), scripted obstacles, stoplights, stop signs, one-way arrows, and blinking waiting-rider counts on the buildings are all projected from the car's perspective. When the sensor cone trips, the FPV shows a red BRAKE overlay; the route then replans (for parked trucks) or continues after the jaywalker clears.
 
 ## Debug stream
 
