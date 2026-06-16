@@ -77,6 +77,9 @@ input[type=password]:focus, input[type=text]:focus { outline: none; border-color
 .route-row.chosen { background: rgba(34,197,94,0.12); border: 1px solid rgba(34,197,94,0.4); }
 .route-sw { width: 12px; height: 12px; border-radius: 2px; flex-shrink: 0; }
 .route-meta { color: #999; font-variant-numeric: tabular-nums; margin-left: auto; font-size: 11px; }
+.cockpit-wrap { width: 100%; aspect-ratio: 1 / 1; background: #0a0b0e; border-radius: 6px; overflow: hidden; }
+#cockpit { width: 100%; height: 100%; display: block; }
+.cockpit-car { font-size: 10px; color: #14b8a6; letter-spacing: 0.5px; margin-left: 6px; }
 .narration { margin-top: 12px; padding: 12px; background: #1f2024; border-radius: 4px; font-size: 12px; line-height: 1.55; color: #ddd; white-space: pre-wrap; }
 .narration.placeholder { color: #666; font-style: italic; }
 .field { display: block; font-size: 11px; color: #888; margin-bottom: 4px; }
@@ -114,7 +117,7 @@ input[type=password]:focus, input[type=text]:focus { outline: none; border-color
       <h3>Controls</h3>
       <div class="row"><label>Speed</label><input type="range" id="speed" min="1" max="20" value="1"><span id="speed-val" style="min-width:32px;text-align:right">1×</span></div>
       <div class="btn-row"><button id="pause">Pause</button><button id="reset">Reset day</button></div>
-      <p class="hint small" style="margin-top:8px">Click any active car on the map to spectate it (POV opens, speed drops to 1×).</p>
+      <p class="hint small" style="margin-top:8px">Click any active car on the map to spectate it (its POV opens in the Driver POV pane below; speed drops to 1×).</p>
     </section>
 
     <section id="spectate-info" hidden>
@@ -162,6 +165,12 @@ input[type=password]:focus, input[type=text]:focus { outline: none; border-color
       <label class="field">Anthropic API key (interactive narration)</label>
       <input type="password" id="api-key" placeholder="sk-ant-… (optional)">
       <p class="hint small">Held in memory only. Without a key, templated narration is shown.</p>
+    </section>
+
+    <section id="cockpit-section">
+      <h3>Driver POV <span id="cockpit-car" class="cockpit-car"></span></h3>
+      <div class="cockpit-wrap"><canvas id="cockpit" width="640" height="640"></canvas></div>
+      <p class="hint small" id="cockpit-cap">Tap any active car on the grid to ride along — or watch a featured car.</p>
     </section>
   </aside>
 </div>
@@ -978,7 +987,7 @@ function startSpectate(car) {
   paused = false;
   document.getElementById("pause").textContent = "Pause";
   document.getElementById("spectate-info").hidden = false;
-  document.querySelector(".canvas-wrap").classList.add("pov-mode");
+  // POV renders in the sidebar cockpit pane; the main grid stays full.
   dbg("SYSTEM", "spectating " + car.id + " (" + car.kind + ")");
 }
 
@@ -987,9 +996,6 @@ function stopSpectate() {
   dbg("SYSTEM", "exited spectate of " + spectateCar.id);
   spectateCar = null;
   document.getElementById("spectate-info").hidden = true;
-  if (mode === "auto") {
-    document.querySelector(".canvas-wrap").classList.remove("pov-mode");
-  }
 }
 
 function setMode(m) {
@@ -1882,6 +1888,10 @@ function drawPin(nid, color, letter) {
 // ============================================================
 const fpvCanvas = document.getElementById("fpv");
 const fpvCtx = fpvCanvas.getContext("2d");
+const cockpitCanvas = document.getElementById("cockpit");
+const cockpitCtx = cockpitCanvas.getContext("2d");
+let featuredCar = null;
+let featuredTimer = 0;
 const FPV_W = fpvCanvas.width;
 const FPV_H = fpvCanvas.height;
 const FPV_FOV_RAD = 75 * Math.PI / 180;
@@ -1977,7 +1987,7 @@ function applyShade(hex, factor) {
   return "rgb(" + Math.round(r * factor) + "," + Math.round(g * factor) + "," + Math.round(b * factor) + ")";
 }
 
-function renderFPV() {
+function renderFPV(focalCar = getFocalCar()) {
   // sky gradient
   const skyGrad = fpvCtx.createLinearGradient(0, 0, 0, FPV_HORIZON);
   skyGrad.addColorStop(0, "#0a0b0e");
@@ -1998,7 +2008,6 @@ function renderFPV() {
   fpvCtx.lineTo(FPV_W, FPV_HORIZON);
   fpvCtx.stroke();
 
-  const focalCar = getFocalCar();
   if (!focalCar) {
     fpvCtx.fillStyle = "#666";
     fpvCtx.font = "14px -apple-system, sans-serif";
@@ -2038,6 +2047,51 @@ function renderFPV() {
   drawDynamicFPV(cam, focalCar);
   drawFPVHUD(focalCar);
   drawEventBanner(fpvCtx, FPV_W, FPV_H);
+}
+
+// Pick a moving car worth watching when the user hasn't selected one.
+function pickFeaturedCar() {
+  let best = null, bestScore = -1;
+  for (const c of cars) {
+    if (c.heading == null) continue;
+    if (c.state !== "enroute_dropoff" && c.state !== "enroute_pickup") continue;
+    const score = (c.state === "enroute_dropoff" ? 10 : 0) + c.riders.length;
+    if (score > bestScore) { bestScore = score; best = c; }
+  }
+  return best;
+}
+
+function isMoving(c) {
+  return c && c.heading != null && (c.state === "enroute_dropoff" || c.state === "enroute_pickup");
+}
+
+// Always-on cockpit pane in the sidebar: the spectated/POV car, else a featured one.
+function renderCockpit() {
+  let focal = spectateCar || ix.drivingCar;
+  let featured = false;
+  if (!focal) {
+    if (!isMoving(featuredCar) || --featuredTimer <= 0) {
+      featuredCar = pickFeaturedCar();
+      featuredTimer = 150;
+    }
+    focal = featuredCar;
+    featured = true;
+  }
+  // Reuse the buffer if the main view already drew this same car this tick.
+  const alreadyRendered = (mode === "pov" || (mode === "auto" && spectateCar)) && focal === getFocalCar();
+  if (!alreadyRendered) renderFPV(focal);
+  cockpitCtx.drawImage(fpvCanvas, 0, 0, cockpitCanvas.width, cockpitCanvas.height);
+
+  const labelEl = document.getElementById("cockpit-car");
+  const capEl = document.getElementById("cockpit-cap");
+  if (focal) {
+    labelEl.textContent = "· " + focal.id + (featured ? " · featured" : "");
+    capEl.textContent = focal.state.replace(/_/g, " ") + " · " +
+      focal.riders.length + "/" + focal.capacity + " aboard · " + focal.kind;
+  } else {
+    labelEl.textContent = "";
+    capEl.textContent = "Cockpit lights up once cars start moving — or tap any active car to ride along.";
+  }
 }
 
 function drawOneWayArrowsFPV(cam) {
@@ -2555,6 +2609,7 @@ function tick() {
   updateHUD();
   render();
   if (mode === "pov" || (mode === "auto" && spectateCar)) renderFPV();
+  renderCockpit();
 }
 
 document.getElementById("speed").addEventListener("input", (e) => {
