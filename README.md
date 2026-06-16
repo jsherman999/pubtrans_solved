@@ -66,9 +66,9 @@ In Interactive and Driver POV modes the app can call **Claude Sonnet 4.6** to na
 
 **Driver POV** — same source/destination flow as Interactive, but during the drive the canvas splits into a small top-down mini-map (with the focal car highlighted and its view cone shown) and a wireframe first-person view from inside the car. Roads with lane stripes, building faces shaded by distance, other cars in the fleet at their real positions (right-lane biased with direction-aware head/taillights), scripted obstacles, stoplights, stop signs, and one-way arrows are all projected from the car's perspective. When the sensor cone trips, the FPV shows a red BRAKE overlay; the route then replans (for parked trucks) or continues after the jaywalker clears.
 
-## Debug window
+## Debug stream
 
-Click **Open debug window** in the sidebar to open a separate browser window that streams every behind-the-scenes decision in real time:
+A debug panel is **docked under the grid** and streams every behind-the-scenes decision in real time from the moment the app loads (the sim starts at 1× — the slowest speed — so the events are easy to follow). Use its **Pause** / **Clear** controls inline, or click **Pop out debug window** in the sidebar to mirror the same stream into a separate browser window:
 
 | Category | Fires when |
 |---|---|
@@ -83,7 +83,7 @@ Click **Open debug window** in the sidebar to open a separate browser window tha
 | `EVENT` | A scheduled surge event fires |
 | `SYSTEM` | Spectate start/exit, debug window open |
 
-Pause / Clear controls in the debug window header. Buffer caps at 500 entries.
+Pause / Clear controls live in both the docked panel and the popped-out window (they stay in sync). Buffer caps at 500 entries.
 
 ## See also
 
