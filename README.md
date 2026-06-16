@@ -50,7 +50,12 @@ In Interactive mode the app can call **Claude Sonnet 4.6** to narrate the dispat
 
 - **City**: 12×12 intersection / 11×11 block grid with 4 employers, 2 schools, 2 grocery stores, 1 train station, and 8 residential clusters
 - **Population**: 100 simulated humans across 4 profiles (worker / student / errand-runner / commuter), each with a randomized daily schedule that generates ride requests at the appropriate times
-- **Fleet**: 28 sedans (capacity 4) + 14 shuttles (capacity 8). The dispatcher pools concurrent same-destination requests into shuttles
+- **Fleet**: 28 sedans (capacity 4) + 14 shuttles (capacity 8), all live-adjustable. The dispatcher works in phases each tick:
+  - **Sedan carpools** — 2–4 riders sharing the *same pickup and destination* ride one sedan.
+  - **Shuttle pools** — 2+ riders heading to the *same destination* from different origins are pooled into a shuttle, whose pickups are visited in nearest-neighbor (proximity) order.
+  - **Origin sweeps** — when the queue backs up past a threshold, a shuttle collects *everyone* waiting at the busiest origin and delivers them across the city on an efficient multi-stop path.
+  - **Singles** — anything left over takes one car (sedan first).
+  - At each pickup the vehicle dwells briefly while boarding: the building's waiting count drops by exactly the number who board as the vehicle's passenger count rises, then it moves on.
 - **Routing**: Dijkstra on the street graph with edge weights = `1 + congestion_penalty × claims`, so cars naturally spread across alternates
 - **Traffic infrastructure** (randomized at init time): 2 one-way streets (Dijkstra respects direction), 4 stoplights with cycling phases, 4 stop signs
 
@@ -71,9 +76,9 @@ A debug panel is **docked under the grid** and streams every behind-the-scenes d
 | Category | Fires when |
 |---|---|
 | `REQUEST` | A scheduled human or a surge event enqueues a ride |
-| `DISPATCH` | Sedan assigned to a single rider |
-| `POOL` | Shuttle pools 2+ riders going to the same destination |
-| `PICKUP` / `DROPOFF` | Car arrives at pickup or completes a drop-off |
+| `DISPATCH` | A car is assigned a single rider or a same-pickup/destination sedan carpool |
+| `POOL` | A shuttle is assigned a same-destination pool or an origin sweep |
+| `PICKUP` / `DROPOFF` | A car boards riders at a stop or drops them at a destination |
 | `PLAN` | Interactive plan: candidate routes with blocks / conflicts / scores |
 | `OBSTACLE` | An obstacle is spawned or sensed by a car |
 | `REPLAN` | Detour computed, jaywalker cleared, or slow-follow resumed |

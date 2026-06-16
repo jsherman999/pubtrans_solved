@@ -717,105 +717,150 @@ function setRoute(car, route) {
   }
 }
 
+const POOL_WINDOW = 30;     // sim-minutes a request stays poolable
+const SURGE_QUEUE = 16;     // queue length that triggers origin "sweeps"
+const SWEEP_MIN = 3;        // min riders waiting at one origin to justify a sweep
+const PICKUP_DWELL = 1;     // ticks a vehicle pauses at a pickup stop while boarding
+
+function nodeDist(a, b) {
+  const [ax, ay] = nodeXY(a), [bx, by] = nodeXY(b);
+  return Math.hypot(ax - bx, ay - by);
+}
+// Greedy nearest-neighbor visiting order over node ids, starting from `start`.
+function nearestOrder(start, ids) {
+  const remaining = ids.slice();
+  const order = [];
+  let cur = start;
+  while (remaining.length) {
+    let bi = 0, bd = Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const d = nodeDist(cur, remaining[i]);
+      if (d < bd) { bd = d; bi = i; }
+    }
+    cur = remaining.splice(bi, 1)[0];
+    order.push(cur);
+  }
+  return order;
+}
+
 function dispatch() {
   if (queue.length === 0) return;
-  const byDest = new Map();
-  for (const req of queue) {
-    if (!byDest.has(req.dropoffId)) byDest.set(req.dropoffId, []);
-    byDest.get(req.dropoffId).push(req);
-  }
   const dispatched = new Set();
-  for (const [, reqs] of byDest) {
-    reqs.sort((a, b) => a.requestedAt - b.requestedAt);
-    const poolable = reqs.filter(r => simMinute - r.requestedAt < 30);
-    if (poolable.length >= 2) {
-      const shuttle = findIdleCar("shuttle");
-      if (shuttle) {
-        const group = poolable.slice(0, shuttle.capacity);
-        if (assignShuttle(shuttle, group)) {
-          for (const r of group) dispatched.add(r.id);
-          pooledCount += group.length;
-          continue;
-        }
-      }
+  const pending = () => queue.filter(r => !dispatched.has(r.id));
+  const groupBy = (keyFn) => {
+    const m = new Map();
+    for (const r of pending()) {
+      const k = keyFn(r);
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(r);
     }
-    for (const r of reqs) {
-      if (dispatched.has(r.id)) continue;
-      const car = findIdleCar("sedan") || findIdleCar("shuttle");
-      if (!car) break;
-      if (assignSingle(car, r)) dispatched.add(r.id);
+    return m;
+  };
+
+  // PHASE A — origin sweeps. Under heavy backlog, a shuttle collects everyone
+  // waiting at the busiest origin and delivers them on an efficient path.
+  while (queue.length - dispatched.size >= SURGE_QUEUE) {
+    let best = null;
+    for (const [, reqs] of groupBy(r => r.pickupId)) {
+      if (reqs.length >= SWEEP_MIN && (!best || reqs.length > best.length)) best = reqs;
+    }
+    if (!best) break;
+    const shuttle = findIdleCar("shuttle");
+    if (!shuttle) break;
+    const group = best.slice(0, shuttle.capacity);
+    if (!assignMultiStop(shuttle, group, "SWEEP")) break;
+    for (const r of group) dispatched.add(r.id);
+    pooledCount += group.length;
+  }
+
+  // PHASE B — sedan carpools: 2-4 riders sharing the same pickup AND destination.
+  for (const [, reqs] of groupBy(r => r.pickupId + ">" + r.dropoffId)) {
+    let rest = reqs.filter(r => !dispatched.has(r.id));
+    while (rest.length >= 2) {
+      const sedan = findIdleCar("sedan");
+      if (!sedan) break;
+      const group = rest.slice(0, sedan.capacity);   // up to 4
+      if (!assignMultiStop(sedan, group, "SEDAN")) break;
+      for (const r of group) dispatched.add(r.id);
+      pooledCount += group.length;
+      rest = rest.filter(r => !dispatched.has(r.id));
     }
   }
+
+  // PHASE C — shuttle pools: 2+ riders to the same destination (within the
+  // pooling window), with pickups visited in nearest-neighbor order.
+  for (const [, reqs] of groupBy(r => r.dropoffId)) {
+    const poolable = reqs.filter(r => !dispatched.has(r.id) && simMinute - r.requestedAt < POOL_WINDOW);
+    if (poolable.length < 2) continue;
+    const shuttle = findIdleCar("shuttle");
+    if (!shuttle) continue;
+    const group = poolable.slice(0, shuttle.capacity);
+    if (assignMultiStop(shuttle, group, "POOL")) {
+      for (const r of group) dispatched.add(r.id);
+      pooledCount += group.length;
+    }
+  }
+
+  // PHASE D — singles: one rider per car, sedan first.
+  for (const r of pending()) {
+    const car = findIdleCar("sedan") || findIdleCar("shuttle");
+    if (!car) break;
+    if (assignMultiStop(car, [r], "SINGLE")) dispatched.add(r.id);
+  }
+
   for (let i = queue.length - 1; i >= 0; i--) {
     if (dispatched.has(queue[i].id)) queue.splice(i, 1);
   }
 }
 
-function assignSingle(car, req) {
-  const toPickup = dijkstra(car.nodeId, req.pickupId);
-  const toDropoff = dijkstra(req.pickupId, req.dropoffId);
-  if (!toPickup || !toDropoff) return false;
-  car.pickupQueue = [req];
-  claimRoute(car, toPickup);
-  claimRoute(car, toDropoff);
-  dbg(
-    "DISPATCH",
-    car.id + " (" + car.kind + ") → r#" + req.id +
-    " · pickup " + req.from.name + " (" + toPickup.edges.length + " blk, cost " + toPickup.cost.toFixed(1) + ")" +
-    " · drop " + req.to.name + " (" + toDropoff.edges.length + " blk, cost " + toDropoff.cost.toFixed(1) + ")"
-  );
-  if (toPickup.edges.length === 0) {
-    // already at pickup
-    car.riders = car.pickupQueue.slice();
-    car.state = "enroute_dropoff";
-    car._toDropoffRoute = null;
-    setRoute(car, toDropoff);
-  } else {
-    car.state = "enroute_pickup";
-    car._toDropoffRoute = toDropoff;
-    setRoute(car, toPickup);
-  }
-  return true;
-}
-
-function assignShuttle(car, reqs) {
-  car.pickupQueue = reqs.slice();
-  let cursor = car.nodeId;
-  const segments = [];
+// Build and start a multi-stop trip: board riders grouped by pickup node
+// (nearest-neighbor order), then alight them grouped by destination
+// (nearest-neighbor order). Used for sedans, pools, and sweeps alike.
+function assignMultiStop(car, reqs, tag) {
+  const pickups = new Map();   // pickupId -> reqs[]
+  const drops = new Map();     // dropoffId -> reqs[]
   for (const r of reqs) {
-    const seg = dijkstra(cursor, r.pickupId);
-    if (!seg) return false;
-    segments.push({ type: "pickup", req: r, route: seg });
-    cursor = r.pickupId;
+    if (!pickups.has(r.pickupId)) pickups.set(r.pickupId, []);
+    pickups.get(r.pickupId).push(r);
+    if (!drops.has(r.dropoffId)) drops.set(r.dropoffId, []);
+    drops.get(r.dropoffId).push(r);
   }
-  const dropSeg = dijkstra(cursor, reqs[0].dropoffId);
-  if (!dropSeg) return false;
-  segments.push({ type: "dropoff_all", route: dropSeg });
+  const pickupOrder = nearestOrder(car.nodeId, [...pickups.keys()]);
+  const lastPickup = pickupOrder[pickupOrder.length - 1];
+  const dropOrder = nearestOrder(lastPickup, [...drops.keys()]);
+
+  const segments = [];
+  let cursor = car.nodeId;
+  for (const pid of pickupOrder) {
+    const route = dijkstra(cursor, pid);
+    if (!route) return false;
+    segments.push({ type: "pickup", reqs: pickups.get(pid), node: pid, route });
+    cursor = pid;
+  }
+  for (const did of dropOrder) {
+    const route = dijkstra(cursor, did);
+    if (!route) return false;
+    segments.push({ type: "dropoff", reqs: drops.get(did), node: did, route });
+    cursor = did;
+  }
+
   for (const s of segments) claimRoute(car, s.route);
+  car.pickupQueue = reqs.slice();   // every rider still waiting until boarded
+  car.riders = [];
   car._segments = segments;
+  car._activeSeg = null;
   const totalBlk = segments.reduce((s, x) => s + x.route.edges.length, 0);
-  dbg(
-    "POOL",
-    car.id + " pooling " + reqs.length + " riders → " + reqs[0].to.name +
-    " · reqs [" + reqs.map(r => "r#" + r.id).join(",") + "]" +
-    " · " + segments.length + " segments, " + totalBlk + " total blocks"
-  );
-  // start first segment
+  const cat = (tag === "SWEEP" || tag === "POOL") ? "POOL" : "DISPATCH";
+  dbg(cat, car.id + " (" + car.kind + ") " + tag + " · " + reqs.length + " rider" +
+    (reqs.length === 1 ? "" : "s") + " · " + pickupOrder.length + " pickup" +
+    (pickupOrder.length === 1 ? "" : "s") + " → " + dropOrder.length + " dest" +
+    (dropOrder.length === 1 ? "" : "s") + " · " + segments.length + " legs, " + totalBlk + " blk");
+
+  // start the first segment; zero-length routes resolve next tick in arriveAtRouteEnd
   const first = car._segments.shift();
   car._activeSeg = first;
-  if (first.type === "pickup" && first.route.edges.length === 0) {
-    // already at first pickup
-    car.riders.push(first.req);
-    const next = car._segments.shift();
-    car._activeSeg = next;
-    if (next) {
-      car.state = (next.type === "dropoff_all") ? "enroute_dropoff" : "enroute_pickup";
-      setRoute(car, next.route);
-    }
-  } else {
-    car.state = "enroute_pickup";
-    setRoute(car, first.route);
-  }
+  car.state = (first.type === "pickup") ? "enroute_pickup" : "enroute_dropoff";
+  setRoute(car, first.route);
   return true;
 }
 
@@ -846,6 +891,11 @@ function stepCars(speedMult, filterCar = null) {
         car._justCleared = true;
         dbg("TRAFFIC", car.id + " green light · proceeding");
       }
+      continue;
+    }
+    if (car.state === "boarding_wait") {
+      car._boardTimer -= 1;
+      if (car._boardTimer <= 0) advanceSegment(car);
       continue;
     }
     if (!car.route || car.routeIndex >= car.route.edges.length) {
@@ -914,19 +964,46 @@ function updateCarXY(car) {
   car.heading = Math.atan2(by - ay, bx - ax);
 }
 
+// Advance a multi-stop trip to its next leg (or finish it).
+function advanceSegment(car) {
+  const next = car._segments.shift();
+  car._activeSeg = next;
+  if (!next) { finishTrip(car); return; }
+  car.state = (next.type === "dropoff") ? "enroute_dropoff" : "enroute_pickup";
+  setRoute(car, next.route);
+}
+
 function arriveAtRouteEnd(car) {
-  // Shuttle multi-segment flow
+  // Multi-stop dispatch flow (sedans, pools, sweeps)
   if (car._segments && car._activeSeg) {
-    if (car._activeSeg.type === "pickup") {
-      car.riders.push(car._activeSeg.req);
-      dbg("PICKUP", car.id + " picked up r#" + car._activeSeg.req.id +
-        " at " + car._activeSeg.req.from.name + " (aboard: " + car.riders.length + "/" + car.capacity + ")");
+    const seg = car._activeSeg;
+    if (seg.type === "pickup") {
+      // Board riders here → the waiting badge drops and the passenger count rises.
+      for (const r of seg.reqs) {
+        car.riders.push(r);
+        const qi = car.pickupQueue.indexOf(r);
+        if (qi >= 0) car.pickupQueue.splice(qi, 1);
+      }
+      dbg("PICKUP", car.id + " picked up " + seg.reqs.length + " rider" +
+        (seg.reqs.length === 1 ? "" : "s") + " at " + seg.reqs[0].from.name +
+        " (aboard " + car.riders.length + "/" + car.capacity + ")");
+      // Dwell one tick at the stop, then continue on the next tick.
+      car.state = "boarding_wait";
+      car._boardTimer = PICKUP_DWELL;
+      return;
     }
-    const next = car._segments.shift();
-    car._activeSeg = next;
-    if (!next) { finishTrip(car); return; }
-    car.state = (next.type === "dropoff_all") ? "enroute_dropoff" : "enroute_pickup";
-    setRoute(car, next.route);
+    // dropoff: alight the riders bound for this node
+    for (const r of seg.reqs) {
+      const ri = car.riders.indexOf(r);
+      if (ri >= 0) car.riders.splice(ri, 1);
+      completedTrips.push({ tripMin: simMinute - r.requestedAt });
+    }
+    if (completedTrips.length > 1000) completedTrips.splice(0, completedTrips.length - 1000);
+    const avgWait = seg.reqs.reduce((s, r) => s + (simMinute - r.requestedAt), 0) / seg.reqs.length;
+    dbg("DROPOFF", car.id + " dropped off " + seg.reqs.length + " rider" +
+      (seg.reqs.length === 1 ? "" : "s") + " at " + (seg.reqs[0].to ? seg.reqs[0].to.name : "destination") +
+      " · avg trip " + avgWait.toFixed(1) + " sim-min");
+    advanceSegment(car);
     return;
   }
   // Sedan flow
@@ -1216,6 +1293,9 @@ document.getElementById("ix-drive").addEventListener("click", () => {
   car.state = "enroute_dropoff";
   car.interactive = true;
   car.sensorActive = true;
+  car.pickupQueue = [];
+  car._segments = null;
+  car._activeSeg = null;
   car.riders = [{ human: { id: -1 }, requestedAt: simMinute, dropoffId: ix.dest.accessId }];
   // initial heading so FPV doesn't open looking the wrong way
   if (route.nodes.length >= 2) {
@@ -2643,9 +2723,9 @@ function drawManualCarFPV(p, depth) {
 function focalDestName(car) {
   if (car === ix.drivingCar && ix.dest) return ix.dest.name;
   if (car._activeSeg) {
-    if (car._activeSeg.type === "pickup") return car._activeSeg.req.from.name;
-    if (car._activeSeg.type === "dropoff_all" && car.riders.length > 0) {
-      return car.riders[0].to.name;
+    if (car._activeSeg.type === "pickup") return car._activeSeg.reqs[0].from.name;
+    if (car._activeSeg.type === "dropoff" && car._activeSeg.reqs[0].to) {
+      return car._activeSeg.reqs[0].to.name;
     }
   }
   if (car.state === "enroute_pickup" && car.pickupQueue.length > 0) {
@@ -2669,6 +2749,7 @@ function drawFPVHUD(car) {
   const baseLabel = {
     enroute_pickup: "EN ROUTE → PICKUP",
     enroute_dropoff: "EN ROUTE → DROPOFF",
+    boarding_wait: "STOPPED · PICKING UP",
     obstacle_wait: "STOPPED · OBSTACLE",
     redlight_wait: "STOPPED · RED LIGHT",
     stopsign_wait: "STOPPED · STOP SIGN",
