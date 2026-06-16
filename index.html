@@ -900,7 +900,8 @@ function stepCars(speedMult, filterCar = null) {
         const qi = car.pickupQueue.indexOf(r);
         if (qi >= 0) car.pickupQueue.splice(qi, 1);   // amber waiting count drops by one
         dbg("PICKUP", car.id + " boarded r#" + r.id + " at " + r.from.name +
-          " (aboard " + car.riders.length + "/" + car.capacity + ")");
+          " (aboard " + car.riders.length + "/" + car.capacity + ")" +
+          (r.to ? " to " + r.to.name : ""));
       } else {
         advanceSegment(car);
       }
