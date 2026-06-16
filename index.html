@@ -69,8 +69,14 @@ button.primary:hover:not(:disabled) { background: #0d9488; }
 input[type=password], input[type=text] { width: 100%; padding: 7px 9px; background: #1f2024; border: 1px solid #3a3d44; color: #ddd; border-radius: 4px; font-size: 12px; font-family: inherit; }
 input[type=password]:focus, input[type=text]:focus { outline: none; border-color: #14b8a6; }
 .hud .row span:last-child { font-variant-numeric: tabular-nums; color: #fff; font-weight: 500; }
-.legend .leg { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; }
+.leg { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-size: 12px; }
 .sw { width: 14px; height: 14px; border-radius: 3px; display: inline-block; flex-shrink: 0; }
+/* Horizontal legend docked under the city grid (4 columns × 2 rows) */
+.legend-bar { flex-shrink: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px 12px; padding: 8px 16px; background: #0f1014; border-top: 1px solid #2a2c33; }
+.legend-bar .leg { font-size: 11px; color: #bbb; padding: 1px 0; gap: 6px; }
+.legend-bar .sw { width: 11px; height: 11px; }
+/* Fixed scrollable LLM narration window (blank until a key drives output) */
+.llm-narration { height: 180px; overflow-y: auto; padding: 11px; background: #1f2024; border-radius: 4px; font-size: 12px; line-height: 1.55; color: #ddd; white-space: pre-wrap; }
 .hint { font-size: 12px; color: #888; line-height: 1.5; margin-bottom: 8px; }
 .hint.small { font-size: 11px; color: #666; margin-top: 6px; }
 .route-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; margin: 4px 0; background: #1f2024; border-radius: 4px; font-size: 12px; }
@@ -95,6 +101,16 @@ input[type=password]:focus, input[type=text]:focus { outline: none; border-color
 <div class="app">
   <div class="main-col">
     <div class="canvas-wrap"><canvas id="map" width="780" height="780"></canvas><canvas id="fpv" width="640" height="640"></canvas></div>
+    <div class="legend-bar">
+      <div class="leg"><span class="sw" style="background:#5b9bd5"></span>Employer</div>
+      <div class="leg"><span class="sw" style="background:#70ad47"></span>Grocery</div>
+      <div class="leg"><span class="sw" style="background:#ffc000"></span>School</div>
+      <div class="leg"><span class="sw" style="background:#c00000"></span>Train station</div>
+      <div class="leg"><span class="sw" style="background:#9a9a9a"></span>Residential</div>
+      <div class="leg"><span class="sw" style="background:#14b8a6"></span>Sedan (cap 4)</div>
+      <div class="leg"><span class="sw" style="background:#f97316"></span>Shuttle (cap 8)</div>
+      <div class="leg"><span class="sw" style="background:#ef4444"></span>Obstacle</div>
+    </div>
     <div class="debug-panel" id="debug-inline">
       <header>
         <button id="dbg-toggle" title="Collapse / expand">▾</button>
@@ -144,31 +160,10 @@ input[type=password]:focus, input[type=text]:focus { outline: none; border-color
       <div class="row"><span>Gridlock</span><span id="gridlock">0.00</span></div>
     </section>
 
-    <section id="interactive-panel" hidden>
-      <h2>Interactive plan</h2>
-      <p class="hint" id="ix-hint">Click on a <b>building</b> to set the <b>source</b>.</p>
-      <div id="ix-routes"></div>
-      <div id="ix-narration" class="narration placeholder" hidden>—</div>
-      <div class="btn-row"><button id="ix-plan" class="primary" disabled>Plan</button><button id="ix-drive" disabled>Drive</button><button id="ix-reset">Clear</button></div>
-    </section>
-
-    <section class="legend">
-      <h3>Legend</h3>
-      <div class="leg"><span class="sw" style="background:#5b9bd5"></span>Employer</div>
-      <div class="leg"><span class="sw" style="background:#70ad47"></span>Grocery</div>
-      <div class="leg"><span class="sw" style="background:#ffc000"></span>School</div>
-      <div class="leg"><span class="sw" style="background:#c00000"></span>Train station</div>
-      <div class="leg"><span class="sw" style="background:#9a9a9a"></span>Residential</div>
-      <div class="leg"><span class="sw" style="background:#14b8a6"></span>Sedan (cap 4)</div>
-      <div class="leg"><span class="sw" style="background:#f97316"></span>Shuttle (cap 8)</div>
-      <div class="leg"><span class="sw" style="background:#ef4444"></span>Obstacle (interactive)</div>
-    </section>
-
-    <section>
-      <h3>Settings</h3>
-      <label class="field">Anthropic API key (interactive narration)</label>
-      <input type="password" id="api-key" placeholder="sk-ant-… (optional)">
-      <p class="hint small">Held in memory only. Without a key, templated narration is shown.</p>
+    <section id="cockpit-section">
+      <h3>Driver POV <span id="cockpit-car" class="cockpit-car"></span></h3>
+      <div class="cockpit-wrap"><canvas id="cockpit" width="640" height="640"></canvas></div>
+      <p class="hint small" id="cockpit-cap">Tap any active car on the grid to ride along — or watch a featured car.</p>
     </section>
 
     <section id="sim-controls">
@@ -185,10 +180,23 @@ input[type=password]:focus, input[type=text]:focus { outline: none; border-color
       <p class="hint small">Adjusts the running sim live. Removing vehicles frees idle ones first; waiting riders are re-queued.</p>
     </section>
 
-    <section id="cockpit-section">
-      <h3>Driver POV <span id="cockpit-car" class="cockpit-car"></span></h3>
-      <div class="cockpit-wrap"><canvas id="cockpit" width="640" height="640"></canvas></div>
-      <p class="hint small" id="cockpit-cap">Tap any active car on the grid to ride along — or watch a featured car.</p>
+    <section id="interactive-panel" hidden>
+      <h2>Interactive plan</h2>
+      <p class="hint" id="ix-hint">Click on a <b>building</b> to set the <b>source</b>.</p>
+      <div id="ix-routes"></div>
+      <div class="btn-row"><button id="ix-plan" class="primary" disabled>Plan</button><button id="ix-drive" disabled>Drive</button><button id="ix-reset">Clear</button></div>
+    </section>
+
+    <section>
+      <h3>Settings</h3>
+      <label class="field">Anthropic API key (interactive narration)</label>
+      <input type="password" id="api-key" placeholder="sk-ant-… (optional)">
+      <p class="hint small">Held in memory only. With a key, the dispatcher's reasoning streams into the LLM narration window below.</p>
+    </section>
+
+    <section id="llm-narration-section">
+      <h3>LLM narration</h3>
+      <div id="llm-narration" class="llm-narration"></div>
     </section>
   </aside>
 </div>
@@ -1071,7 +1079,7 @@ function ixReset() {
   document.getElementById("ix-hint").innerHTML = "Click on a <b>building</b> to set the <b>source</b>.";
   document.getElementById("ix-plan").disabled = true;
   document.getElementById("ix-drive").disabled = true;
-  document.getElementById("ix-narration").hidden = true;
+  document.getElementById("llm-narration").textContent = "";
   document.getElementById("ix-routes").innerHTML = "";
 }
 
@@ -1119,7 +1127,7 @@ canvas.addEventListener("click", (e) => {
     ix.routes = [];
     ix.chosen = null;
     document.getElementById("ix-routes").innerHTML = "";
-    document.getElementById("ix-narration").hidden = true;
+    document.getElementById("llm-narration").textContent = "";
     document.getElementById("ix-plan").disabled = true;
     document.getElementById("ix-drive").disabled = true;
     document.getElementById("ix-hint").innerHTML =
@@ -1182,13 +1190,13 @@ document.getElementById("ix-plan").addEventListener("click", async () => {
     })),
     chosen: labels[bestIdx],
   };
-  const narrEl = document.getElementById("ix-narration");
-  narrEl.hidden = false;
-  narrEl.classList.add("placeholder");
-  narrEl.textContent = "Reasoning…";
-  const text = await narrateDecision(decisionData);
-  narrEl.classList.remove("placeholder");
-  narrEl.textContent = text;
+  const narrEl = document.getElementById("llm-narration");
+  if (hasApiKey()) {
+    narrEl.textContent = "Reasoning…";
+    narrEl.textContent = await narrateDecision(decisionData);
+  } else {
+    narrEl.textContent = "";   // narration window stays blank without an API key
+  }
 });
 
 document.getElementById("ix-drive").addEventListener("click", () => {
@@ -1277,7 +1285,7 @@ function checkObstacle(car) {
     car._obstacleKind = o.kind;
     car._obstacle = o;
     const isFocal = (car === ix.drivingCar);
-    const narrEl = isFocal ? document.getElementById("ix-narration") : null;
+    const narrEl = (isFocal && hasApiKey()) ? document.getElementById("llm-narration") : null;
     if (narrEl) narrEl.classList.remove("placeholder");
     if (o.kind === "jaywalker") {
       car._obstacleTimer = 25;
@@ -1312,7 +1320,7 @@ function resolveObstacle(car) {
   const o = car._obstacle;
   const prevState = car._stateBeforeObstacle || "enroute_dropoff";
   const isFocal = (car === ix.drivingCar);
-  const narrEl = isFocal ? document.getElementById("ix-narration") : null;
+  const narrEl = (isFocal && hasApiKey()) ? document.getElementById("llm-narration") : null;
   car._stateBeforeObstacle = null;
 
   if (kind === "parked truck") {
@@ -1527,6 +1535,8 @@ function templatedNarration(d) {
   lines.push("Choice minimizes expected travel time while reducing edge-level overlap with already-dispatched cars (priority: safety, rider time, system gridlock).");
   return lines.join(" ");
 }
+
+function hasApiKey() { return document.getElementById("api-key").value.trim().length > 0; }
 
 async function narrateDecision(d) {
   const apiKey = document.getElementById("api-key").value.trim();
