@@ -55,7 +55,7 @@ In Interactive mode the app can call **Claude Sonnet 4.6** to narrate the dispat
   - **Shuttle pools** — 2+ riders heading to the *same destination* from different origins are pooled into a shuttle, whose pickups are visited in nearest-neighbor (proximity) order.
   - **Origin sweeps** — when the queue backs up past a threshold, a shuttle collects *everyone* waiting at the busiest origin and delivers them across the city on an efficient multi-stop path.
   - **Singles** — anything left over takes one car (sedan first).
-  - At each pickup the vehicle dwells briefly while boarding: the building's waiting count drops by exactly the number who board as the vehicle's passenger count rises, then it moves on.
+  - At each pickup the vehicle pauses and boards **one passenger per tick**: the building's amber waiting count ticks down by one as the vehicle's passenger count ticks up by one, for as many ticks as there are riders boarding there, then it moves on.
 - **Routing**: Dijkstra on the street graph with edge weights = `1 + congestion_penalty × claims`, so cars naturally spread across alternates
 - **Traffic infrastructure** (randomized at init time): 2 one-way streets (Dijkstra respects direction), 4 stoplights with cycling phases, 4 stop signs
 

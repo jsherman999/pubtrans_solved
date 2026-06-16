@@ -659,6 +659,7 @@ function makeCar(kind, id) {
     _toDropoffRoute: null,
     _segments: null,
     _activeSeg: null,
+    _boarding: null,
     _obstacleTimer: 0,
     _banEdge: null,
   };
@@ -720,7 +721,6 @@ function setRoute(car, route) {
 const POOL_WINDOW = 30;     // sim-minutes a request stays poolable
 const SURGE_QUEUE = 16;     // queue length that triggers origin "sweeps"
 const SWEEP_MIN = 3;        // min riders waiting at one origin to justify a sweep
-const PICKUP_DWELL = 1;     // ticks a vehicle pauses at a pickup stop while boarding
 
 function nodeDist(a, b) {
   const [ax, ay] = nodeXY(a), [bx, by] = nodeXY(b);
@@ -894,8 +894,16 @@ function stepCars(speedMult, filterCar = null) {
       continue;
     }
     if (car.state === "boarding_wait") {
-      car._boardTimer -= 1;
-      if (car._boardTimer <= 0) advanceSegment(car);
+      if (car._boarding && car._boarding.length > 0) {
+        const r = car._boarding.shift();              // one passenger boards this tick
+        car.riders.push(r);
+        const qi = car.pickupQueue.indexOf(r);
+        if (qi >= 0) car.pickupQueue.splice(qi, 1);   // amber waiting count drops by one
+        dbg("PICKUP", car.id + " boarded r#" + r.id + " at " + r.from.name +
+          " (aboard " + car.riders.length + "/" + car.capacity + ")");
+      } else {
+        advanceSegment(car);
+      }
       continue;
     }
     if (!car.route || car.routeIndex >= car.route.edges.length) {
@@ -978,18 +986,10 @@ function arriveAtRouteEnd(car) {
   if (car._segments && car._activeSeg) {
     const seg = car._activeSeg;
     if (seg.type === "pickup") {
-      // Board riders here → the waiting badge drops and the passenger count rises.
-      for (const r of seg.reqs) {
-        car.riders.push(r);
-        const qi = car.pickupQueue.indexOf(r);
-        if (qi >= 0) car.pickupQueue.splice(qi, 1);
-      }
-      dbg("PICKUP", car.id + " picked up " + seg.reqs.length + " rider" +
-        (seg.reqs.length === 1 ? "" : "s") + " at " + seg.reqs[0].from.name +
-        " (aboard " + car.riders.length + "/" + car.capacity + ")");
-      // Dwell one tick at the stop, then continue on the next tick.
+      // Board one passenger per tick: the building's waiting badge ticks down as
+      // the passenger count ticks up, pausing here for as many ticks as riders.
+      car._boarding = seg.reqs.slice();
       car.state = "boarding_wait";
-      car._boardTimer = PICKUP_DWELL;
       return;
     }
     // dropoff: alight the riders bound for this node
@@ -1047,6 +1047,7 @@ function finishTrip(car) {
   car.route = null;
   car._segments = null;
   car._activeSeg = null;
+  car._boarding = null;
   car._toDropoffRoute = null;
   car._slowedTicks = 0;
   car._obstacleKind = null;
@@ -2870,6 +2871,7 @@ document.getElementById("reset").addEventListener("click", () => {
     c.pickupQueue = [];
     c._segments = null;
     c._activeSeg = null;
+    c._boarding = null;
     c._toDropoffRoute = null;
     c._slowedTicks = 0;
     c._obstacleKind = null;
