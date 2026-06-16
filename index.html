@@ -190,7 +190,8 @@ input[type=password]:focus, input[type=text]:focus { outline: none; border-color
     <section>
       <h3>Settings</h3>
       <label class="field">Anthropic API key (interactive narration)</label>
-      <input type="password" id="api-key" placeholder="sk-ant-… (optional)">
+      <input type="password" id="api-key" placeholder="sk-ant-… (optional)" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
+      <p class="hint small" id="api-key-status"></p>
       <p class="hint small">Held in memory only. With a key, the dispatcher's reasoning streams into the LLM narration window below.</p>
     </section>
 
@@ -1536,10 +1537,30 @@ function templatedNarration(d) {
   return lines.join(" ");
 }
 
-function hasApiKey() { return document.getElementById("api-key").value.trim().length > 0; }
+// Read the key, stripping whitespace and any stray characters a mobile paste
+// may smuggle in (newlines, non-breaking/zero-width spaces, etc.). Anthropic
+// keys are limited to [A-Za-z0-9_-], so anything else is paste noise.
+function getApiKey() {
+  return document.getElementById("api-key").value.replace(/[^A-Za-z0-9_\-]/g, "");
+}
+function hasApiKey() { return getApiKey().length > 0; }
+
+// Live feedback so a bad paste is obvious before the first LLM call.
+function updateApiKeyStatus() {
+  const raw = document.getElementById("api-key").value;
+  const key = raw.replace(/[^A-Za-z0-9_\-]/g, "");
+  const el = document.getElementById("api-key-status");
+  if (!key) { el.textContent = ""; return; }
+  const okPrefix = key.startsWith("sk-ant-");
+  const stray = raw.length - key.length;
+  el.textContent = (okPrefix ? "✓ " : "⚠ ") + "key set · " + key.length + " chars" +
+    (okPrefix ? "" : " · expected to start with \"sk-ant-\"") +
+    (stray > 0 ? " · stripped " + stray + " stray char" + (stray === 1 ? "" : "s") : "");
+  el.style.color = okPrefix ? "#14b8a6" : "#f59e0b";
+}
 
 async function narrateDecision(d) {
-  const apiKey = document.getElementById("api-key").value.trim();
+  const apiKey = getApiKey();
   if (!apiKey) return templatedNarration(d);
   const prompt =
     "You are the dispatching agent for an autonomous transportation system in a small metro area.\n" +
@@ -1569,7 +1590,14 @@ async function narrateDecision(d) {
     });
     if (!resp.ok) {
       const errText = await resp.text();
-      return templatedNarration(d) + "\n\n(LLM call failed: " + resp.status + " — " + errText.slice(0, 120) + ")";
+      if (resp.status === 401) {
+        return "⚠️ API key rejected (401: invalid x-api-key).\n\n" +
+          "The key reached Anthropic but wasn't recognized. Check that you pasted a " +
+          "complete, current key beginning with \"sk-ant-\" — re-copy it cleanly (no " +
+          "trailing spaces or line breaks) and paste again. The status line under the " +
+          "key field shows the detected length and prefix.";
+      }
+      return "⚠️ LLM call failed (" + resp.status + "): " + errText.slice(0, 160);
     }
     const data = await resp.json();
     if (data && data.content && data.content[0] && data.content[0].text) {
@@ -1577,7 +1605,8 @@ async function narrateDecision(d) {
     }
     return templatedNarration(d);
   } catch (e) {
-    return templatedNarration(d) + "\n\n(LLM call failed: " + e.message + ")";
+    return "⚠️ LLM call failed: " + e.message +
+      "\n\n(If this is a network/CORS error, the direct browser call may be blocked by your network.)";
   }
 }
 
@@ -2794,6 +2823,7 @@ document.getElementById("dbg-toggle").addEventListener("click", () => {
   document.querySelector(".main-col").classList.toggle("dbg-collapsed");
 });
 document.getElementById("exit-spectate").addEventListener("click", stopSpectate);
+document.getElementById("api-key").addEventListener("input", updateApiKeyStatus);
 
 // ============================================================
 // Live fleet & demand controls
