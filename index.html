@@ -196,6 +196,9 @@ input[type=password]:focus, input[type=text]:focus { outline: none; border-color
       <div class="row"><span>Pooled riders</span><span id="pooled-rides">0</span></div>
       <div class="row"><span>Avg trip (min)</span><span id="avg-trip">—</span></div>
       <div class="row"><span>Gridlock</span><span id="gridlock">0.00</span></div>
+      <div class="row"><span>Sim load</span><span id="perf-cpu">—</span></div>
+      <div class="row" id="perf-mem-row"><span>JS heap</span><span id="perf-mem">—</span></div>
+      <p class="hint small" id="perf-note" style="margin-top:6px"></p>
     </section>
 
     <section id="cockpit-section">
@@ -2985,7 +2988,28 @@ function renderMetricsGraph() {
 // Main loop
 // ============================================================
 let speedMult = 1;
+
+// Host-load indicator. The sim runs entirely on the visitor's device, so the
+// main-thread cost of each tick is a portable CPU proxy (no browser exposes a
+// real CPU %). JS heap is shown where the browser provides it (Chromium only).
+const HEAP_OK = !!(window.performance && performance.memory);
+let perfMsEMA = 0, perfLastShown = 0;
+function recordTick(ms, now) {
+  perfMsEMA = perfMsEMA ? perfMsEMA * 0.9 + ms * 0.1 : ms;
+  if (now - perfLastShown < 1000) return;        // refresh the readout ~1×/sec
+  perfLastShown = now;
+  const load = Math.min(999, Math.round(perfMsEMA / BASE_TICK_MS * 100));
+  const cpuEl = document.getElementById("perf-cpu");
+  cpuEl.textContent = perfMsEMA.toFixed(1) + " ms · " + load + "%";
+  cpuEl.style.color = load >= 90 ? "#ef4444" : load >= 60 ? "#fbbf24" : "";
+  if (HEAP_OK) {
+    document.getElementById("perf-mem").textContent =
+      (performance.memory.usedJSHeapSize / 1048576).toFixed(0) + " MB";
+  }
+}
+
 function tick() {
+  const __t0 = performance.now();
   if (mode === "auto" && !paused) {
     simMinute += SIM_MIN_PER_TICK * speedMult;
     if (simMinute >= 24 * 60) {
@@ -3013,6 +3037,8 @@ function tick() {
   render();
   renderCockpit();
   renderMetricsGraph();
+  const __t1 = performance.now();
+  recordTick(__t1 - __t0, __t1);
 }
 
 document.getElementById("speed").addEventListener("input", (e) => {
@@ -3145,6 +3171,13 @@ buildFleet();
 updateControlsDisplay();
 sizeGraphCanvas();
 setMode("auto");
+// Host-load readout: note the device's core count; hide the JS-heap row where
+// the browser doesn't expose it (e.g. Safari / iPhone).
+const __cores = navigator.hardwareConcurrency;
+document.getElementById("perf-note").textContent =
+  "Runs entirely on this device" + (__cores ? " · " + __cores + " logical cores" : "") +
+  (HEAP_OK ? "" : " · heap n/a in this browser");
+if (!HEAP_OK) document.getElementById("perf-mem-row").style.display = "none";
 dbg("SYSTEM", "Debug stream active — Auto mode running at 1× (slowest).");
 setInterval(tick, BASE_TICK_MS);
 </script>
