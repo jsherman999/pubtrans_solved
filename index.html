@@ -7,21 +7,43 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f1014; color: #e0e0e0; height: 100vh; overflow: hidden; }
 .app { display: grid; grid-template-columns: 1fr 380px; height: 100vh; }
-.main-col { display: flex; flex-direction: column; height: 100vh; min-width: 0; overflow: hidden; }
-.canvas-wrap { flex: 1; min-height: 0; position: relative; background: #0f1014; display: flex; align-items: center; justify-content: center; padding: 24px; gap: 0; }
-/* Inline debug panel, docked under the grid */
-.debug-panel { height: 240px; flex-shrink: 0; display: flex; flex-direction: column; background: #0c0d11; border-top: 1px solid #2a2c33; }
-.main-col.dbg-collapsed .debug-panel { height: auto; }
+/* Desktop default: grid hugs the left, the debug + metrics graph dock fills the right-hand margin */
+.main-col { display: flex; flex-direction: row; height: 100vh; min-width: 0; overflow: hidden; }
+.grid-col { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.canvas-wrap { flex: 1; min-height: 0; position: relative; background: #0f1014; display: flex; align-items: center; justify-content: flex-start; padding: 24px; gap: 0; }
+.side-dock { flex: 0 0 auto; width: clamp(340px, 34%, 560px); min-width: 0; min-height: 0; display: flex; flex-direction: column-reverse; border-left: 1px solid #2a2c33; }
+/* Inline debug panel — tall lower part of the dock on desktop; the long middle panel on phone */
+.debug-panel { display: flex; flex-direction: column; background: #0c0d11; }
+.side-dock .debug-panel { flex: 1 1 auto; min-height: 0; }
+.main-col.dbg-collapsed .debug-panel { flex: 0 0 auto; }
 .main-col.dbg-collapsed #debug-log { display: none; }
 .main-col.dbg-collapsed #dbg-toggle { transform: rotate(-90deg); }
 .debug-panel header { display: flex; gap: 10px; align-items: center; padding: 8px 14px; background: #16171c; border-bottom: 1px solid #2a2c33; }
 #dbg-toggle { padding: 2px 7px; font-size: 11px; line-height: 1; transition: transform 0.15s; }
-/* Phone / narrow viewports: grid flush to top, debug fills the rest down to the bottom */
+/* Live-metrics graph — fixed-height upper part of the dock on desktop; pinned to the bottom on phone */
+.graph-panel { display: flex; flex-direction: column; background: #0c0d11; }
+.side-dock .graph-panel { flex: 0 0 auto; height: 260px; border-bottom: 1px solid #2a2c33; }
+.graph-panel header { display: flex; gap: 10px; align-items: center; padding: 6px 14px; background: #16171c; border-bottom: 1px solid #2a2c33; }
+.graph-panel header h1 { font-size: 12px; font-weight: 600; letter-spacing: 0.3px; white-space: nowrap; }
+.graph-panel header .grow { flex: 1; }
+.graph-legend { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 3px 10px; font-size: 11px; }
+.graph-legend .gl { display: inline-flex; align-items: center; gap: 5px; color: #aaa; white-space: nowrap; }
+.graph-legend .gl::before { content: ""; width: 13px; height: 2px; border-radius: 1px; background: var(--c, #888); }
+.graph-legend .gl b { color: #fff; font-weight: 600; font-variant-numeric: tabular-nums; }
+#metrics-graph { flex: 1; width: 100%; min-height: 0; display: block; }
+/* Phone / narrow viewports: vertical stack — grid (top), long debug (middle), graph (bottom) */
 @media (max-width: 1024px) {
+  .main-col { flex-direction: column; }
+  .grid-col { flex: 0 0 auto; }
   .canvas-wrap { flex: 0 0 auto; align-items: flex-start; padding: 6px; }
-  .debug-panel { height: auto; flex: 1 1 auto; min-height: 0; }
+  .side-dock { flex: 1 1 auto; width: auto; flex-direction: column; border-left: none; }
+  .side-dock .debug-panel { flex: 1 1 auto; min-height: 0; border-top: 1px solid #2a2c33; }
+  .side-dock .graph-panel { flex: 0 0 auto; height: 120px; border-top: 1px solid #2a2c33; border-bottom: none; }
+  .graph-panel header h1 { display: none; }
+  .main-col.dbg-collapsed .grid-col { flex: 1 1 auto; }
   .main-col.dbg-collapsed .canvas-wrap { flex: 1 1 auto; }
-  .main-col.dbg-collapsed .debug-panel { flex: 0 0 auto; }
+  .main-col.dbg-collapsed .side-dock { flex: 0 0 auto; }
+  .main-col.dbg-collapsed .side-dock .debug-panel { flex: 0 0 auto; }
 }
 .debug-panel header h1 { font-size: 12px; font-weight: 600; letter-spacing: 0.3px; }
 .debug-panel header .grow { flex: 1; }
@@ -41,6 +63,7 @@ html, body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
 #debug-log .cat-replan .cat { color: #ec4899; }
 #debug-log .cat-traffic .cat { color: #38bdf8; }
 #debug-log .cat-event .cat { color: #f59e0b; }
+#debug-log .cat-narration .cat { color: #e879f9; }
 #debug-log .cat-system .cat { color: #888; }
 #debug-log .msg { color: #ddd; word-break: break-word; }
 #map { background: #1f2024; border-radius: 6px; box-shadow: 0 10px 40px rgba(0,0,0,0.5); display: block; max-width: 100%; max-height: 100%; }
@@ -48,9 +71,6 @@ html, body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
 #fpv { display: none; }   /* offscreen FPV buffer; the visible view is the sidebar cockpit */
 .sidebar { background: #16171c; border-left: 1px solid #2a2c33; overflow-y: auto; padding: 18px; display: flex; flex-direction: column; }
 .sidebar > section { flex-shrink: 0; }
-/* LLM narration is the last section — let it grow to fill the column to the bottom */
-#llm-narration-section { flex: 1 0 auto; display: flex; flex-direction: column; min-height: 160px; margin-bottom: 0; }
-#llm-narration-section .llm-narration { flex: 1; }
 .sidebar h1 { font-size: 22px; font-weight: 600; margin-bottom: 2px; letter-spacing: -0.3px; }
 .sub { font-size: 12px; color: #888; margin-bottom: 18px; }
 .mode-toggle { display: flex; gap: 6px; margin-bottom: 16px; }
@@ -76,8 +96,6 @@ input[type=password]:focus, input[type=text]:focus { outline: none; border-color
 .legend-bar { flex-shrink: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px 12px; padding: 8px 16px; background: #0f1014; border-top: 1px solid #2a2c33; }
 .legend-bar .leg { font-size: 11px; color: #bbb; padding: 1px 0; gap: 6px; }
 .legend-bar .sw { width: 11px; height: 11px; }
-/* Fixed scrollable LLM narration window (blank until a key drives output) */
-.llm-narration { min-height: 140px; overflow-y: auto; padding: 11px; background: #1f2024; border-radius: 4px; font-size: 12px; line-height: 1.55; color: #ddd; white-space: pre-wrap; }
 .hint { font-size: 12px; color: #888; line-height: 1.5; margin-bottom: 8px; }
 .hint.small { font-size: 11px; color: #666; margin-top: 6px; }
 .route-row { display: flex; align-items: center; gap: 8px; padding: 6px 10px; margin: 4px 0; background: #1f2024; border-radius: 4px; font-size: 12px; }
@@ -101,6 +119,7 @@ input[type=password]:focus, input[type=text]:focus { outline: none; border-color
 <body>
 <div class="app">
   <div class="main-col">
+    <div class="grid-col">
     <div class="canvas-wrap"><canvas id="map" width="780" height="780"></canvas><canvas id="fpv" width="640" height="640"></canvas></div>
     <div class="legend-bar">
       <div class="leg"><span class="sw" style="background:#5b9bd5"></span>Employer</div>
@@ -112,6 +131,8 @@ input[type=password]:focus, input[type=text]:focus { outline: none; border-color
       <div class="leg"><span class="sw" style="background:#f97316"></span>Shuttle (cap 8)</div>
       <div class="leg"><span class="sw" style="background:#ef4444"></span>Obstacle</div>
     </div>
+    </div><!-- /grid-col -->
+    <div class="side-dock">
     <div class="debug-panel" id="debug-inline">
       <header>
         <button id="dbg-toggle" title="Collapse / expand">▾</button>
@@ -122,6 +143,21 @@ input[type=password]:focus, input[type=text]:focus { outline: none; border-color
       </header>
       <div id="debug-log"></div>
     </div>
+    <div class="graph-panel" id="graph-panel">
+      <header>
+        <h1>Live metrics</h1>
+        <div class="grow"></div>
+        <span class="graph-legend">
+          <span class="gl" style="--c:#22c55e">Active <b id="g-active">0</b></span>
+          <span class="gl" style="--c:#fbbf24">Queued <b id="g-queued">0</b></span>
+          <span class="gl" style="--c:#f97316">Pooled <b id="g-pooled">0</b></span>
+          <span class="gl" style="--c:#ef4444">Gridlock <b id="g-gridlock">0.00</b></span>
+          <span class="gl" style="--c:#14b8a6">Surge</span>
+        </span>
+      </header>
+      <canvas id="metrics-graph"></canvas>
+    </div>
+    </div><!-- /side-dock -->
   </div>
   <aside class="sidebar">
     <h1>PubTrans</h1>
@@ -192,12 +228,7 @@ input[type=password]:focus, input[type=text]:focus { outline: none; border-color
       <label class="field">Anthropic API key (interactive narration)</label>
       <input type="password" id="api-key" placeholder="sk-ant-… (optional)" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false">
       <p class="hint small" id="api-key-status"></p>
-      <p class="hint small">Held in memory only. With a key, the dispatcher's reasoning streams into the LLM narration window below.</p>
-    </section>
-
-    <section id="llm-narration-section">
-      <h3>LLM narration</h3>
-      <div id="llm-narration" class="llm-narration"></div>
+      <p class="hint small">Held in memory only. With a key, the dispatcher's reasoning streams into the debug stream while in Interactive mode.</p>
     </section>
   </aside>
 </div>
@@ -217,7 +248,7 @@ const POPULATION = 100;
 const N_SEDANS = 28;
 const N_SHUTTLES = 14;
 const K_PATHS = 3;
-const SIM_MIN_PER_TICK = 0.5;     // 30 simulated seconds per tick
+const SIM_MIN_PER_TICK = 0.05;    // 3 sim-sec/tick → 1 sim-min per block (20 ticks/block at 1×), realistic cab trips
 const BASE_TICK_MS = 100;         // real-time tick interval
 const SENSOR_RANGE_PX = 60;
 const CONGESTION_W = 0.6;         // cost added per claim on an edge
@@ -501,6 +532,7 @@ const DBG_STYLE =
   '.cat-plan .cat { color: #fbbf24; }' +
   '.cat-obstacle .cat { color: #ef4444; }' +
   '.cat-replan .cat { color: #ec4899; }' +
+  '.cat-narration .cat { color: #e879f9; }' +
   '.cat-system .cat { color: #888; }' +
   '.msg { color: #ddd; word-break: break-word; }';
 
@@ -1155,7 +1187,6 @@ function ixReset() {
   document.getElementById("ix-hint").innerHTML = "Click on a <b>building</b> to set the <b>source</b>.";
   document.getElementById("ix-plan").disabled = true;
   document.getElementById("ix-drive").disabled = true;
-  document.getElementById("llm-narration").textContent = "";
   document.getElementById("ix-routes").innerHTML = "";
 }
 
@@ -1203,7 +1234,6 @@ canvas.addEventListener("click", (e) => {
     ix.routes = [];
     ix.chosen = null;
     document.getElementById("ix-routes").innerHTML = "";
-    document.getElementById("llm-narration").textContent = "";
     document.getElementById("ix-plan").disabled = true;
     document.getElementById("ix-drive").disabled = true;
     document.getElementById("ix-hint").innerHTML =
@@ -1266,12 +1296,10 @@ document.getElementById("ix-plan").addEventListener("click", async () => {
     })),
     chosen: labels[bestIdx],
   };
-  const narrEl = document.getElementById("llm-narration");
+  // Narration streams into the debug stream (Interactive mode only), not a dedicated panel.
   if (hasApiKey()) {
-    narrEl.textContent = "Reasoning…";
-    narrEl.textContent = await narrateDecision(decisionData);
-  } else {
-    narrEl.textContent = "";   // narration window stays blank without an API key
+    dbg("NARRATION", "Querying Claude for route reasoning…");
+    dbg("NARRATION", await narrateDecision(decisionData));
   }
 });
 
@@ -1363,31 +1391,29 @@ function checkObstacle(car) {
     car.state = "obstacle_wait";
     car._obstacleKind = o.kind;
     car._obstacle = o;
-    const isFocal = (car === ix.drivingCar);
-    const narrEl = (isFocal && hasApiKey()) ? document.getElementById("llm-narration") : null;
-    if (narrEl) narrEl.classList.remove("placeholder");
+    const narrate = (car === ix.drivingCar) && hasApiKey();
     if (o.kind === "jaywalker") {
       car._obstacleTimer = 25;
       car._banEdge = null;
       o.crossT = 0;
       dbg("OBSTACLE", car.id + " sensor cone detected jaywalker stepping into the road · braking");
-      if (narrEl) narrEl.textContent =
+      if (narrate) dbg("NARRATION",
         "Sensor cone detected a jaywalker stepping into the road. " +
-        "Braking to let them clear (same route resumes after).";
+        "Braking to let them clear (same route resumes after).");
     } else if (o.kind === "parked truck") {
       car._obstacleTimer = 12;
       car._banEdge = o.edgeKey;
       dbg("OBSTACLE", car.id + " sensor cone detected parked truck on edge " + o.edgeKey + " · computing detour");
-      if (narrEl) narrEl.textContent =
+      if (narrate) dbg("NARRATION",
         "Sensor cone detected a parked truck blocking the lane. " +
-        "Stationary obstacle — computing a detour around it.";
+        "Stationary obstacle — computing a detour around it.");
     } else {
       car._obstacleTimer = 10;
       car._banEdge = null;
       dbg("OBSTACLE", car.id + " sensor cone detected manual-driven car ahead · braking to follow safely");
-      if (narrEl) narrEl.textContent =
+      if (narrate) dbg("NARRATION",
         "Sensor cone detected a manual-driven car ahead. " +
-        "Slowing to a safe following distance — no detour needed.";
+        "Slowing to a safe following distance — no detour needed.");
     }
     return true;
   }
@@ -1398,8 +1424,7 @@ function resolveObstacle(car) {
   const kind = car._obstacleKind;
   const o = car._obstacle;
   const prevState = car._stateBeforeObstacle || "enroute_dropoff";
-  const isFocal = (car === ix.drivingCar);
-  const narrEl = (isFocal && hasApiKey()) ? document.getElementById("llm-narration") : null;
+  const narrate = (car === ix.drivingCar) && hasApiKey();
   car._stateBeforeObstacle = null;
 
   if (kind === "parked truck") {
@@ -1417,8 +1442,8 @@ function resolveObstacle(car) {
         car.state = prevState;
         dbg("REPLAN", car.id + " detoured around parked truck on edge " + car._banEdge +
           " · " + newRoute.edges.length + " blocks (cost " + newRoute.cost.toFixed(1) + ")");
-        if (narrEl) narrEl.textContent +=
-          " Detour found — " + newRoute.edges.length + " blocks remaining. Truck stays parked.";
+        if (narrate) dbg("NARRATION",
+          "Detour found — " + newRoute.edges.length + " blocks remaining. Truck stays parked.");
         return;
       }
       dbg("REPLAN", car.id + " no detour available around parked truck · continuing on banned edge");
@@ -1432,7 +1457,7 @@ function resolveObstacle(car) {
     car.state = prevState;
     const remaining = car.route ? (car.route.edges.length - car.routeIndex) : 0;
     dbg("REPLAN", car.id + " jaywalker cleared the road · resuming on same route (" + remaining + " blocks remaining)");
-    if (narrEl) narrEl.textContent += " Jaywalker cleared the road — resuming on same route.";
+    if (narrate) dbg("NARRATION", "Jaywalker cleared the road — resuming on same route.");
     return;
   }
 
@@ -1441,7 +1466,7 @@ function resolveObstacle(car) {
     car.state = prevState;
     if (o) o.active = false;
     dbg("REPLAN", car.id + " safe following distance established · resuming at 40% speed for ~30 ticks");
-    if (narrEl) narrEl.textContent += " Safe following distance established — resuming at reduced speed.";
+    if (narrate) dbg("NARRATION", "Safe following distance established — resuming at reduced speed.");
     return;
   }
 
@@ -1514,6 +1539,7 @@ function fireEvent(evt) {
     injected++;
   }
   currentEvent = { label: evt.label, timer: EVENT_BANNER_TICKS };
+  surgePending = true;   // marks the next metrics sample with a surge line
   dbg("EVENT", evt.label + " · " + injected + " requests injected");
 }
 
@@ -2811,10 +2837,104 @@ function updateHUD() {
   for (const k in edges) totalClaims += edges[k].claims.size;
   const gridlock = totalClaims / N_EDGES;
   document.getElementById("gridlock").textContent = gridlock.toFixed(2);
+  latestMetrics = { active, queued: queue.length, pooled: pooledCount, gridlock };
   if (spectateCar) {
     document.getElementById("spec-car").textContent = spectateCar.id + " (" + spectateCar.kind + ")";
     document.getElementById("spec-state").textContent = spectateCar.state.replace(/_/g, " ");
     document.getElementById("spec-riders").textContent = spectateCar.riders.length + " / " + spectateCar.capacity;
+  }
+}
+
+// ============================================================
+// Live metrics graph — scrolling time-series docked under the debug panel.
+// Plots the relative (per-series-normalized) movement of active rides, queued
+// requests, pooled riders, and gridlock; every surge event drops a teal vertical
+// line (same color as the surge banner) so its effect on the curves is visible.
+// ============================================================
+const GRAPH_SAMPLES = 240;     // visible window width, in samples (newest pinned right)
+const metricsHist = [];        // ring buffer of { a, q, p, g, surge }
+let surgePending = false;      // set by fireEvent, consumed by the next sample
+let latestMetrics = { active: 0, queued: 0, pooled: 0, gridlock: 0 };
+
+// field = sample key, el = header readout id, color = line color
+const GRAPH_SERIES = [
+  { f: "a", color: "#22c55e" },   // active rides
+  { f: "q", color: "#fbbf24" },   // queued
+  { f: "p", color: "#f97316" },   // pooled riders
+  { f: "g", color: "#ef4444" },   // gridlock
+];
+const SURGE_LINE = "rgba(20, 184, 166, 0.55)";   // matches the surge event banner
+
+const graphCanvas = document.getElementById("metrics-graph");
+const gctx = graphCanvas.getContext("2d");
+let gW = 0, gH = 0;
+function sizeGraphCanvas() {
+  const rect = graphCanvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  gW = Math.max(1, Math.round(rect.width));
+  gH = Math.max(1, Math.round(rect.height));
+  graphCanvas.width = Math.round(gW * dpr);
+  graphCanvas.height = Math.round(gH * dpr);
+  gctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener("resize", sizeGraphCanvas);
+
+function sampleMetrics() {
+  metricsHist.push({
+    a: latestMetrics.active, q: latestMetrics.queued,
+    p: latestMetrics.pooled, g: latestMetrics.gridlock,
+    surge: surgePending,
+  });
+  surgePending = false;
+  while (metricsHist.length > GRAPH_SAMPLES) metricsHist.shift();
+}
+
+function renderMetricsGraph() {
+  document.getElementById("g-active").textContent = latestMetrics.active;
+  document.getElementById("g-queued").textContent = latestMetrics.queued;
+  document.getElementById("g-pooled").textContent = latestMetrics.pooled;
+  document.getElementById("g-gridlock").textContent = latestMetrics.gridlock.toFixed(2);
+  gctx.clearRect(0, 0, gW, gH);
+  gctx.fillStyle = "#0a0b0e";
+  gctx.fillRect(0, 0, gW, gH);
+
+  const PAD_T = 8, PAD_B = 6;
+  const plotH = Math.max(1, gH - PAD_T - PAD_B);
+  gctx.strokeStyle = "rgba(255,255,255,0.06)";
+  gctx.lineWidth = 1;
+  for (const f of [0, 0.5, 1]) {
+    const y = PAD_T + plotH * f;
+    gctx.beginPath(); gctx.moveTo(0, y); gctx.lineTo(gW, y); gctx.stroke();
+  }
+
+  const n = metricsHist.length;
+  if (n === 0) return;
+  const step = gW / (GRAPH_SAMPLES - 1);
+  const xAt = j => gW - (n - 1 - j) * step;   // newest sample at the right edge
+
+  // surge markers first, so the data lines draw on top of them
+  gctx.strokeStyle = SURGE_LINE;
+  gctx.lineWidth = 1.5;
+  for (let j = 0; j < n; j++) {
+    if (!metricsHist[j].surge) continue;
+    const x = xAt(j);
+    gctx.beginPath(); gctx.moveTo(x, 0); gctx.lineTo(x, gH); gctx.stroke();
+  }
+
+  // one normalized line per series (relative to its own visible max)
+  for (const s of GRAPH_SERIES) {
+    let max = 1e-6;
+    for (let j = 0; j < n; j++) max = Math.max(max, metricsHist[j][s.f]);
+    gctx.strokeStyle = s.color;
+    gctx.lineWidth = 1.6;
+    gctx.lineJoin = "round";
+    gctx.beginPath();
+    for (let j = 0; j < n; j++) {
+      const y = PAD_T + plotH * (1 - metricsHist[j][s.f] / max);
+      const x = xAt(j);
+      if (j === 0) gctx.moveTo(x, y); else gctx.lineTo(x, y);
+    }
+    gctx.stroke();
   }
 }
 
@@ -2845,8 +2965,10 @@ function tick() {
   waitingByBldg = computeWaiting();
   updateCockpitFocal();
   updateHUD();
+  if (mode === "auto" && !paused) sampleMetrics();   // sample only while sim-time advances
   render();
   renderCockpit();
+  renderMetricsGraph();
 }
 
 document.getElementById("speed").addEventListener("input", (e) => {
@@ -2863,6 +2985,8 @@ document.getElementById("reset").addEventListener("click", () => {
   queue.length = 0;
   completedTrips.length = 0;
   pooledCount = 0;
+  metricsHist.length = 0;
+  surgePending = false;
   ix.obstacles = [];
   autoObstacleSpawnTimer = 60;
   for (const c of cars) {
@@ -2971,6 +3095,7 @@ setupTrafficControls();
 buildPopulation();
 buildFleet();
 updateControlsDisplay();
+sizeGraphCanvas();
 setMode("auto");
 dbg("SYSTEM", "Debug stream active — Auto mode running at 1× (slowest).");
 setInterval(tick, BASE_TICK_MS);
