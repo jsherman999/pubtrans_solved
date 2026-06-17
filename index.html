@@ -106,6 +106,8 @@ input[type=password]:focus, input[type=text]:focus { outline: none; border-color
 .stepper-btns { display: flex; align-items: center; gap: 8px; }
 .stepper-btns button { width: 26px; height: 26px; padding: 0; font-size: 16px; line-height: 1; }
 .stepper-btns span { min-width: 32px; text-align: center; font-variant-numeric: tabular-nums; color: #fff; font-weight: 500; }
+.stepper-btns .active-count { min-width: 0; color: #ef4444; font-weight: 600; }
+.stepper-btns .active-count::before { content: "·"; color: #666; margin: 0 4px; font-weight: 400; }
 .cockpit-wrap { width: 100%; aspect-ratio: 1 / 1; background: #0a0b0e; border-radius: 6px; overflow: hidden; }
 #cockpit { width: 100%; height: 100%; display: block; }
 .cockpit-car { font-size: 10px; color: #14b8a6; letter-spacing: 0.5px; margin-left: 6px; }
@@ -208,10 +210,10 @@ input[type=password]:focus, input[type=text]:focus { outline: none; border-color
         <div class="stepper-btns"><button data-act="pop-dec">−</button><span id="ctl-pop">100</span><button data-act="pop-inc">+</button></div>
       </div>
       <div class="stepper"><span>Sedans (cap 4)</span>
-        <div class="stepper-btns"><button data-act="sed-dec">−</button><span id="ctl-sed">28</span><button data-act="sed-inc">+</button></div>
+        <div class="stepper-btns"><button data-act="sed-dec">−</button><span id="ctl-sed">28</span><span class="active-count" id="ctl-sed-active" title="currently active (out of the depot)">0</span><button data-act="sed-inc">+</button></div>
       </div>
       <div class="stepper"><span>Shuttles (cap 8)</span>
-        <div class="stepper-btns"><button data-act="shu-dec">−</button><span id="ctl-shu">14</span><button data-act="shu-inc">+</button></div>
+        <div class="stepper-btns"><button data-act="shu-dec">−</button><span id="ctl-shu">14</span><span class="active-count" id="ctl-shu-active" title="currently active (out of the depot)">0</span><button data-act="shu-inc">+</button></div>
       </div>
       <p class="hint small">Adjusts the running sim live. Removing vehicles frees idle ones first; waiting riders are re-queued.</p>
     </section>
@@ -344,6 +346,10 @@ function buildingByName(name) {
   for (const b of BUILDINGS) if (b.name === name) return b;
   return null;
 }
+
+// Central Stn doubles as the fleet depot: idle cars park here and deploy from here.
+const CENTRAL_NODE = buildingByName("Central Stn").accessId;
+const IDLE_RETURN_MIN = 3;   // sim-minutes a car may sit idle in the grid before heading home
 
 function setupTrafficControls() {
   // 4 stoplights + 4 stop signs at distinct random non-border intersections.
@@ -670,13 +676,11 @@ let shuttleSeq = N_SHUTTLES;
 let humanSeq = POPULATION;
 
 function makeCar(kind, id) {
-  const c = Math.floor(Math.random() * GRID_N);
-  const r = Math.floor(Math.random() * GRID_N);
-  const [x, y] = nodeXY(nodeId(c, r));
+  const [x, y] = nodeXY(CENTRAL_NODE);   // start parked at the depot
   return {
     id, kind,
     capacity: kind === "sedan" ? 4 : 8,
-    nodeId: nodeId(c, r),
+    nodeId: CENTRAL_NODE,
     pos: { x, y },
     heading: 0,
     route: null,
@@ -694,6 +698,7 @@ function makeCar(kind, id) {
     _boarding: null,
     _obstacleTimer: 0,
     _banEdge: null,
+    _idleSince: 0,
   };
 }
 function buildFleet() {
@@ -842,6 +847,22 @@ function dispatch() {
 
   for (let i = queue.length - 1; i >= 0; i--) {
     if (dispatched.has(queue[i].id)) queue.splice(i, 1);
+  }
+}
+
+// Idle cars that have lingered in the grid past the threshold drive back to the
+// depot (Central Stn) and park there until dispatch needs them again.
+function returnIdleCars() {
+  for (const car of cars) {
+    if (car.state !== "idle" || car.interactive) continue;
+    if (car.nodeId === CENTRAL_NODE) continue;            // already parked at the hub
+    if (simMinute - car._idleSince < IDLE_RETURN_MIN) continue;
+    const route = dijkstra(car.nodeId, CENTRAL_NODE);
+    if (!route) continue;
+    if (route.edges.length === 0) { car.nodeId = CENTRAL_NODE; continue; }
+    claimRoute(car, route);
+    setRoute(car, route);
+    car.state = "returning";
   }
 }
 
@@ -1015,6 +1036,13 @@ function advanceSegment(car) {
 }
 
 function arriveAtRouteEnd(car) {
+  // Reached the depot after repositioning — park (idle) at Central Stn.
+  if (car.state === "returning") {
+    car.route = null;
+    car.state = "idle";
+    car._idleSince = simMinute;
+    return;
+  }
   // Multi-stop dispatch flow (sedans, pools, sweeps)
   if (car._segments && car._activeSeg) {
     const seg = car._activeSeg;
@@ -1090,6 +1118,7 @@ function finishTrip(car) {
   car._justCleared = false;
   car._waitingAtNode = null;
   car._fromEdge = null;
+  car._idleSince = simMinute;   // start the idle clock; returns to the depot once it expires
   if (car.interactive) {
     car.interactive = false;
     car.sensorActive = false;
@@ -1920,9 +1949,15 @@ function drawBuildings() {
 }
 
 function drawCars() {
+  let parkedIdx = 0;   // pack depot-parked cars into a tidy lot instead of one blob
   for (const car of cars) {
     if (car.state === "idle") {
-      const [x, y] = nodeXY(car.nodeId);
+      let [x, y] = nodeXY(car.nodeId);
+      if (car.nodeId === CENTRAL_NODE) {
+        const cols = 8, sp = 5, i = parkedIdx++;
+        x += ((i % cols) - (cols - 1) / 2) * sp;
+        y += (Math.floor(i / cols) - 1) * sp + 14;   // tuck the lot just below the hub
+      }
       ctx.globalAlpha = 0.30;
       ctx.fillStyle = car.color;
       ctx.beginPath();
@@ -2822,8 +2857,16 @@ function drawFPVHUD(car) {
 function updateHUD() {
   document.getElementById("clock").textContent = clockStr();
   let active = 0;
-  for (const c of cars) if (c.state !== "idle") active++;
+  let sedParked = 0, shuParked = 0;   // idle and parked at the depot (not "out")
+  for (const c of cars) {
+    if (c.state !== "idle" && c.state !== "returning") active++;
+    if (c.state === "idle" && c.nodeId === CENTRAL_NODE) {
+      if (c.kind === "sedan") sedParked++; else shuParked++;
+    }
+  }
   document.getElementById("active-rides").textContent = active;
+  document.getElementById("ctl-sed-active").textContent = countCars("sedan") - sedParked;
+  document.getElementById("ctl-shu-active").textContent = countCars("shuttle") - shuParked;
   document.getElementById("queued-rides").textContent = queue.length;
   document.getElementById("completed-rides").textContent = completedTrips.length;
   document.getElementById("pooled-rides").textContent = pooledCount;
@@ -2953,6 +2996,7 @@ function tick() {
     checkSchedules();
     tickEvents();
     dispatch();
+    returnIdleCars();
     tickStoplights();
     stepCars(speedMult);
     tickAutoObstacles();
@@ -2991,6 +3035,10 @@ document.getElementById("reset").addEventListener("click", () => {
   autoObstacleSpawnTimer = 60;
   for (const c of cars) {
     c.state = "idle";
+    c.nodeId = CENTRAL_NODE;                 // re-park the whole fleet at the depot
+    const [cx, cy] = nodeXY(CENTRAL_NODE);
+    c.pos.x = cx; c.pos.y = cy;
+    c._idleSince = simMinute;
     c.route = null;
     c.riders = [];
     c.pickupQueue = [];
