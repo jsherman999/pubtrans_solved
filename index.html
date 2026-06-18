@@ -253,7 +253,7 @@ const POPULATION = 100;
 const N_SEDANS = 28;
 const N_SHUTTLES = 14;
 const K_PATHS = 3;
-const SIM_MIN_PER_TICK = 0.05;    // 3 sim-sec/tick → 1 sim-min per block (20 ticks/block at 1×), realistic cab trips
+const SIM_MIN_PER_TICK = 0.5;     // paired with baseStep 0.25 → 4 ticks/block = 2 sim-min/block; fast real-time pace, realistic ~20-min rides
 const DAY_START = 7 * 60 + 30;    // 07:30 — start at the school rush so demand is immediate even at 1×
 const BASE_TICK_MS = 100;         // real-time tick interval
 const SENSOR_RANGE_PX = 60;
@@ -970,7 +970,7 @@ function stepCars(speedMult, filterCar = null) {
     }
     const slowFactor = (car._slowedTicks > 0) ? 0.4 : 1;
     if (car._slowedTicks > 0) car._slowedTicks--;
-    const baseStep = 0.05 * speedMult * slowFactor;
+    const baseStep = 0.25 * speedMult * slowFactor;   // 4 ticks/block at 1×; paired with SIM_MIN_PER_TICK for ~20-min rides
     car.progress += baseStep;
     while (car.progress >= 1 && car.routeIndex < car.route.edges.length) {
       const nextNode = car.route.nodes[car.routeIndex + 1];
