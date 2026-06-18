@@ -38,7 +38,7 @@ html, body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
   .canvas-wrap { flex: 0 0 auto; align-items: flex-start; padding: 6px; }
   .side-dock { flex: 1 1 auto; width: auto; flex-direction: column; border-left: none; }
   .side-dock .debug-panel { flex: 1 1 auto; min-height: 0; border-top: 1px solid #2a2c33; }
-  .side-dock .graph-panel { flex: 0 0 auto; height: 120px; border-top: 1px solid #2a2c33; border-bottom: none; }
+  .side-dock .graph-panel { flex: 0 0 auto; height: 240px; border-top: 1px solid #2a2c33; border-bottom: none; }
   .graph-panel header h1 { display: none; }
   .main-col.dbg-collapsed .grid-col { flex: 1 1 auto; }
   .main-col.dbg-collapsed .canvas-wrap { flex: 1 1 auto; }
@@ -253,7 +253,7 @@ const POPULATION = 100;
 const N_SEDANS = 28;
 const N_SHUTTLES = 14;
 const K_PATHS = 3;
-const SIM_MIN_PER_TICK = 0.5;     // paired with baseStep 0.25 → 4 ticks/block = 2 sim-min/block; fast real-time pace, realistic ~20-min rides
+const SIM_MIN_PER_TICK = 0.3;     // paired with baseStep 0.15 → ~6.7 ticks/block = 2 sim-min/block; brisk pace, realistic ~20-min rides
 const DAY_START = 7 * 60 + 30;    // 07:30 — start at the school rush so demand is immediate even at 1×
 const BASE_TICK_MS = 100;         // real-time tick interval
 const SENSOR_RANGE_PX = 60;
@@ -970,7 +970,7 @@ function stepCars(speedMult, filterCar = null) {
     }
     const slowFactor = (car._slowedTicks > 0) ? 0.4 : 1;
     if (car._slowedTicks > 0) car._slowedTicks--;
-    const baseStep = 0.25 * speedMult * slowFactor;   // 4 ticks/block at 1×; paired with SIM_MIN_PER_TICK for ~20-min rides
+    const baseStep = 0.15 * speedMult * slowFactor;   // ~6.7 ticks/block at 1×; paired with SIM_MIN_PER_TICK for ~20-min rides
     car.progress += baseStep;
     while (car.progress >= 1 && car.routeIndex < car.route.edges.length) {
       const nextNode = car.route.nodes[car.routeIndex + 1];
