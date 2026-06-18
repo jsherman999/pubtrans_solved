@@ -254,6 +254,7 @@ const N_SEDANS = 28;
 const N_SHUTTLES = 14;
 const K_PATHS = 3;
 const SIM_MIN_PER_TICK = 0.05;    // 3 sim-sec/tick → 1 sim-min per block (20 ticks/block at 1×), realistic cab trips
+const DAY_START = 7 * 60 + 30;    // 07:30 — start at the school rush so demand is immediate even at 1×
 const BASE_TICK_MS = 100;         // real-time tick interval
 const SENSOR_RANGE_PX = 60;
 const CONGESTION_W = 0.6;         // cost added per claim on an edge
@@ -505,7 +506,7 @@ function kShortest(srcId, dstId, k = K_PATHS) {
 // ============================================================
 // Time
 // ============================================================
-let simMinute = 6 * 60 + 30;       // start 06:30
+let simMinute = DAY_START;       // start 07:30
 let paused = false;
 function clockStr() {
   const t = ((simMinute % 1440) + 1440) % 1440;
@@ -3013,7 +3014,7 @@ function tick() {
   if (mode === "auto" && !paused) {
     simMinute += SIM_MIN_PER_TICK * speedMult;
     if (simMinute >= 24 * 60) {
-      simMinute = 6 * 60 + 30;
+      simMinute = DAY_START;
       for (const h of humans) for (const s of h.schedule) s.requested = false;
       for (const evt of eventSchedule) evt.fired = false;
     }
@@ -3051,7 +3052,7 @@ document.getElementById("pause").addEventListener("click", () => {
 });
 document.getElementById("reset").addEventListener("click", () => {
   if (spectateCar) stopSpectate();
-  simMinute = 6 * 60 + 30;
+  simMinute = DAY_START;
   queue.length = 0;
   completedTrips.length = 0;
   pooledCount = 0;
